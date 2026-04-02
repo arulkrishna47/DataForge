@@ -1,0 +1,129 @@
+generator client {
+  provider = "prisma-client-js"
+  binaryTargets = ["native", "windows"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              String           @id @default(uuid())
+  email           String           @unique
+  name            String?
+  role            Role             @default(CLIENT)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  annotations     Annotation[]
+  projects        Project[]
+  reviews         Review[]
+  serviceRequests ServiceRequest[]
+  tasks           Task[]
+}
+
+model ServiceRequest {
+  id          String   @id @default(uuid())
+  serviceType String
+  scope       String
+  timeline    String
+  budget      String
+  status      String   @default("Pending")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  clientId    String
+  client      User     @relation(fields: [clientId], references: [id])
+}
+
+model Project {
+  id          String        @id @default(uuid())
+  title       String
+  description String?
+  type        ProjectType   @default(COLLECTION)
+  status      ProjectStatus @default(DRAFT)
+  budget      Float         @default(0)
+  deadline    DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  clientId    String
+  payments    Payment[]
+  client      User          @relation(fields: [clientId], references: [id])
+  reviews     Review[]
+  tasks       Task[]
+}
+
+model Task {
+  id               String       @id @default(uuid())
+  projectId        String
+  assignedWorkerId String?
+  status           TaskStatus   @default(PENDING)
+  instructions     String?
+  fileUrl          String?
+  resultUrl        String?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  annotations      Annotation[]
+  worker           User?        @relation(fields: [assignedWorkerId], references: [id])
+  project          Project      @relation(fields: [projectId], references: [id])
+}
+
+model Annotation {
+  id          String   @id @default(uuid())
+  taskId      String
+  workerId    String
+  data        Json
+  confidence  Float    @default(0)
+  submittedAt DateTime @default(now())
+  task        Task     @relation(fields: [taskId], references: [id])
+  worker      User     @relation(fields: [workerId], references: [id])
+}
+
+model Payment {
+  id              String   @id @default(uuid())
+  projectId       String
+  stripeSessionId String?
+  amount          Float
+  currency        String   @default("USD")
+  status          String   @default("PENDING")
+  createdAt       DateTime @default(now())
+  project         Project  @relation(fields: [projectId], references: [id])
+}
+
+model Review {
+  id        String   @id @default(uuid())
+  projectId String
+  clientId  String
+  rating    Int
+  comment   String?
+  createdAt DateTime @default(now())
+  client    User     @relation(fields: [clientId], references: [id])
+  project   Project  @relation(fields: [projectId], references: [id])
+}
+
+enum Role {
+  CLIENT
+  WORKER
+  ADMIN
+}
+
+enum ProjectType {
+  COLLECTION
+  ANNOTATION
+  TRAINING
+}
+
+enum ProjectStatus {
+  DRAFT
+  OPEN
+  IN_PROGRESS
+  REVIEW
+  COMPLETED
+}
+
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  SUBMITTED
+  APPROVED
+  REJECTED
+}

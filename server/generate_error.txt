@@ -1,0 +1,5 @@
+Loaded Prisma config from prisma.config.ts.
+
+Prisma schema loaded from prisma\schema.prisma.
+Error: Could not resolve @prisma/client.
+Please try to install it with npm i @prisma/client and rerun npx "prisma generate" 🙏.

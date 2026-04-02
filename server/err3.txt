@@ -1,0 +1,12 @@
+PrismaClientConstructorValidationError: Using engine type "client" requires either "adapter" or "accelerateUrl" to be provided to PrismaClient constructor.
+Read more at https://pris.ly/d/client-constructor
+    at Rm (C:\Users\arulk\OneDrive\Desktop\DataForge\server\node_modules\@prisma\client\runtime\client.js:66:3615)
+    at jl (C:\Users\arulk\OneDrive\Desktop\DataForge\server\node_modules\@prisma\client\runtime\client.js:66:3916)
+    at new t (C:\Users\arulk\OneDrive\Desktop\DataForge\server\node_modules\@prisma\client\runtime\client.js:70:1808)
+    at Object.<anonymous> (C:\Users\arulk\OneDrive\Desktop\DataForge\server\src\db.js:4:16)
+    at Module._compile (node:internal/modules/cjs/loader:1706:14)
+    at Object..js (node:internal/modules/cjs/loader:1839:10)
+    at Module.load (node:internal/modules/cjs/loader:1441:32)
+    at Function._load (node:internal/modules/cjs/loader:1263:12)
+    at TracingChannel.traceSync (node:diagnostics_channel:322:14)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:237:24)

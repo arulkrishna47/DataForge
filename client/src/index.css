@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #C17BFF;
+  --color-primary-dark: #9B4FD4;
+  --color-secondary: #F0A030;
+  --color-accent: #D0D0D8;
+  --color-background: #0D0B1A;
+  --color-foreground: #FFFFFF;
+  --color-navy: var(--color-background);
+  --color-electric-blue: var(--color-primary);
+  --font-sans: "Inter", sans-serif;
+}
+
+@layer base {
+  body {
+    @apply bg-background text-foreground overflow-x-hidden;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-primary hover:bg-primary-dark text-white font-semibold py-2 px-6 rounded-lg transition-all duration-300;
+  }
+}

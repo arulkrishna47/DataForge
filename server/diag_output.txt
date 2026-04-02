@@ -1,0 +1,36 @@
+﻿[dotenv@17.3.1] injecting env (14) from .env -- tip: ≡ƒöÉ prevent committing .env to code: https://dotenvx.com/precommit
+serviceRequests: 2
+projects: 0
+users with role=CLIENT: 0
+users with role=ADMIN: 2
+All users: [{"email":"arulkrishna47@gmail.com","role":"ADMIN"},{"email":"cortexa.services@gmail.com","role":"ADMIN"}]
+Recent requests: [
+  {
+    "id": "5884c005-865d-47ea-a3b5-426e432464a3",
+    "serviceType": "Dataset Collection",
+    "scope": "dwdfnwkjfd",
+    "timeline": "wdwjkfw",
+    "budget": "N/A",
+    "status": "Pending",
+    "createdAt": "2026-03-31T08:45:18.950Z",
+    "updatedAt": "2026-03-31T08:45:18.950Z",
+    "clientId": "d72ac490-99d0-4566-95e8-8496e968d0dd",
+    "client": {
+      "email": "arulkrishna47@gmail.com"
+    }
+  },
+  {
+    "id": "d0735b88-bf64-4fcc-9f8e-68eca0b0d52d",
+    "serviceType": "Dataset Collection",
+    "scope": "wnejdkwl",
+    "timeline": "eedf ",
+    "budget": "N/A",
+    "status": "Pending",
+    "createdAt": "2026-03-31T08:40:25.237Z",
+    "updatedAt": "2026-03-31T08:40:25.237Z",
+    "clientId": "d72ac490-99d0-4566-95e8-8496e968d0dd",
+    "client": {
+      "email": "arulkrishna47@gmail.com"
+    }
+  }
+]
