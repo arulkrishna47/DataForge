@@ -112,7 +112,7 @@ export default function AutoAnnotate() {
   const downloadResults = () => {
     if (!jobId) return
     window.open(
-      `${import.meta.env.VITE_API_URL}/annotate/download/${jobId}`,
+      `${import.meta.env.VITE_API_BASE_URL}/annotate/download/${jobId}`,
       '_blank'
     )
   }
@@ -328,7 +328,7 @@ export default function AutoAnnotate() {
                 <div key={i} className="bg-[#0D0B1A] rounded-xl border border-[#2A2740] overflow-hidden">
                   <div className="aspect-video bg-[#1A1733] relative">
                     {res.preview && (
-                       <img src={`${(import.meta.env.VITE_API_URL || '').replace('/api','')}/${res.preview}`} className="w-full h-full object-cover" alt="Preview"/>
+                       <img src={`${(import.meta.env.VITE_API_BASE_URL || '').replace('/api','')}/${res.preview}`} className="w-full h-full object-cover" alt="Preview"/>
                     )}
                   </div>
                   <div className="p-3">
