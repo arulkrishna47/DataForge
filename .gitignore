@@ -37,3 +37,14 @@ Thumbs.db
 # Uploads
 /server/uploads/*
 !/server/uploads/.gitkeep
+
+# AI Service
+/ai-service/weights/
+/ai-service/uploads/
+/ai-service/outputs/
+/ai-service/__pycache__/
+/ai-service/*.pt
+/ai-service/*.pth
+/ai-service/test.jpg
+/ai-service/test_api.py
+/ai-service/test2.py

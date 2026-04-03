@@ -20,6 +20,7 @@ model User {
   reviews         Review[]
   serviceRequests ServiceRequest[]
   tasks           Task[]
+  annotationJobs  AnnotationJob[]
 }
 
 model ServiceRequest {
@@ -126,4 +127,17 @@ enum TaskStatus {
   SUBMITTED
   APPROVED
   REJECTED
+}
+
+model AnnotationJob {
+  id           String   @id @default(cuid())
+  jobId        String   @unique
+  userId       String
+  user         User     @relation(fields: [userId], references: [id])
+  labels       String
+  exportFormat String   @default("yolo")
+  status       String   @default("PROCESSING")
+  totalFiles   Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 }

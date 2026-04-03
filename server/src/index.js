@@ -52,11 +52,13 @@ const authRoutes = require('./routes/authRoutes');
 const serviceRoutes = require('./routes/serviceRoutes');
 const projectRoutes = require('./routes/projectRoutes');
 const adminRoutes = require('./routes/adminRoutes');
+const annotateRoutes = require('./routes/annotateRoutes');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/services', serviceRoutes);
 app.use('/api/projects', projectRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/annotate', annotateRoutes);
 
 // Health check
 app.get('/health', (req, res) => {
