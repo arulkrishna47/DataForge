@@ -12,17 +12,31 @@ class ImageAnnotator:
   def __init__(self, labels: list[str]):
     self.labels = labels
     self.device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"[DEBUG] Using device: {self.device}")
     self._load_models()
 
   def _load_models(self):
-    # Load Grounding DINO for zero-shot detection
-    from groundingdino.util.inference import load_model
-    self.grounding_model = load_model(
-      "weights/groundingdino_swint_ogc.cfg.py",
-      "weights/groundingdino_swint_ogc.pth"
-    )
-    # Load SAM 2 for segmentation
+    print(f"[DEBUG] Loading Grounding DINO on {self.device}...")
+    from groundingdino.models import build_model
+    from groundingdino.util.slconfig import SLConfig
+    from groundingdino.util.utils import clean_state_dict
+    
+    config_path = "weights/groundingdino_swint_ogc.cfg.py"
+    checkpoint_path = "weights/groundingdino_swint_ogc.pth"
+    
+    args = SLConfig.fromfile(config_path)
+    args.device = self.device
+    self.grounding_model = build_model(args)
+    checkpoint = torch.load(checkpoint_path, map_location=self.device)
+    self.grounding_model.load_state_dict(clean_state_dict(checkpoint["model"]), strict=False)
+    self.grounding_model.eval()
+    self.grounding_model.to(self.device)
+
+    print(f"[DEBUG] Loading SAM on {self.device}...")
+    # Load SAM for segmentation
     self.sam_model = SAM("mobile_sam.pt")
+    self.sam_model.to(self.device)
+    print("[DEBUG] Models loaded successfully!")
 
   def annotate_image(
     self, image_path: str,
@@ -45,6 +59,7 @@ class ImageAnnotator:
       caption=text_prompt,
       box_threshold=0.35,
       text_threshold=0.25,
+      device=self.device
     )
 
     if len(boxes) == 0:
