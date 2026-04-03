@@ -1,6 +1,6 @@
 import { Link, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { LayoutDashboard, FolderKanban, Settings, LogOut, User, ArrowLeft } from 'lucide-react';
+import { LayoutDashboard, FolderKanban, Settings, LogOut, User, ArrowLeft, Scan } from 'lucide-react';
 import { useState } from 'react';
 
 // Avatar with fallback if Google/GitHub image fails to load
@@ -54,6 +54,7 @@ const DashboardLayout = () => {
   const menuItems = [
     { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
     { name: 'Project Detail', path: '/dashboard/project/latest', icon: FolderKanban },
+    { name: 'Auto Annotate', path: '/dashboard/auto-annotate', icon: Scan },
     { name: 'Settings', path: '/dashboard/settings', icon: Settings },
   ];
 

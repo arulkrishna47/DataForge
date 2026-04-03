@@ -15,6 +15,7 @@ import DashboardLayout from './layouts/DashboardLayout';
 import ClientDashboard from './pages/ClientDashboard';
 import ProjectDetail from './pages/ProjectDetail';
 import ClientSettings from './pages/ClientSettings';
+import AutoAnnotate from './pages/AutoAnnotate';
 
 import AdminLayout from './layouts/AdminLayout';
 import AdminDashboard from './pages/admin/AdminDashboard';
@@ -46,6 +47,7 @@ function App() {
               <Route index element={<ClientDashboard />} />
               <Route path="project/:id" element={<ProjectDetail />} />
               <Route path="settings" element={<ClientSettings />} />
+              <Route path="auto-annotate" element={<AutoAnnotate />} />
             </Route>
           </Route>
 
