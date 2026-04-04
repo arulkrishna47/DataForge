@@ -26,16 +26,12 @@ router.post(
       const { labels, export_format } = req.body;
       const files = req.files;
 
-      if (!files?.length) {
-        return res.status(400).json({ error: 'No files uploaded' });
-      }
-      if (!labels) {
-        return res.status(400).json({ error: 'Labels are required' });
-      }
+      if (!files?.length) return res.status(400).json({ error: 'No files uploaded' });
+      if (!labels) return res.status(400).json({ error: 'Labels are required' });
 
-      console.log(`[DEBUG] Starting Job: ${files.length} files. Target: ${AI_SERVICE_URL}/annotate`);
+      console.log(`[DEBUG] Step 1: Forwarding to AI Brain: ${AI_SERVICE_URL}/annotate`);
 
-      // 1. Prepare Data for AI Brain
+      // 1. Prepare Data
       const formData = new FormData();
       files.forEach(file => {
         formData.append('files', fs.createReadStream(file.path), file.originalname);
@@ -43,46 +39,53 @@ router.post(
       formData.append('labels', labels);
       formData.append('export_format', export_format || 'yolo');
 
-      // 2. Call AI Brain (Hugging Face)
+      // 2. Call AI Brain
       const response = await axios.post(
         `${AI_SERVICE_URL}/annotate`,
         formData,
         {
           headers: formData.getHeaders(),
-          timeout: 600000 // 10 minutes for heavy uploads
+          timeout: 600000 // 10 minutes
         }
       );
 
       job_id_clean = response.data.job_id;
+      console.log("[DEBUG] Step 2: AI Brain accepted the job. ID:", job_id_clean);
 
-      // 3. Convert labels string to proper array for Prisma database
-      const labelArray = labels.split(',').map(l => l.trim()).filter(l => l);
-
-      // 4. Save job to Supabase (Database)
+      // 3. Save to Database
+      // Using String() on everything to prevent Prisma type mismatches
       await prisma.annotationJob.create({
         data: {
-          jobId: job_id_clean,
+          jobId: String(job_id_clean),
           userId: req.user.id,
-          labels: labels, // Error fix: Prisma needs an ARRAY, not a string
-          exportFormat: export_format || 'yolo',
+          labels: String(labels),
+          exportFormat: String(export_format || 'yolo'),
           status: 'PROCESSING',
           totalFiles: files.length,
         }
       });
 
-      console.log(`[DEBUG] Job Created Successfully: ${job_id_clean}`);
+      console.log("[DEBUG] Step 3: Database Job Created Successfully!");
       return res.json(response.data);
 
     } catch (err) {
-      console.error("[ERROR] Annotation Route Failed:", err.message);
-      if (err.response) console.error("[ERROR] AI Brain returned:", err.response.data);
+      console.error("[CRITICAL ERROR] Annotation Route Failed!");
+      console.error("-> Message:", err.message);
 
-      return res.status(500).json({
-        error: 'Failed to start annotation job',
-        details: err.message
-      });
+      // Detailed error for Prisma vs AI Brain
+      if (err.code && err.code.startsWith('P')) {
+        console.error("-> Database Error Detail:", err);
+        return res.status(500).json({ error: 'Database error while saving job', details: err.message });
+      }
+
+      if (err.response) {
+        console.error("-> AI Brain Error Detail:", err.response.data);
+        return res.status(err.response.status).json({ error: 'AI Brain Error', details: err.response.data });
+      }
+
+      return res.status(500).json({ error: 'System Error', details: err.message });
     } finally {
-      // Clean up uploaded files from the server disk
+      // Clean up uploads
       if (req.files) {
         req.files.forEach(f => fs.unlink(f.path, () => { }));
       }
@@ -91,7 +94,6 @@ router.post(
 );
 
 // GET /api/annotate/status/:jobId
-// Updated to match the new "/annotate/status" route on Hugging Face
 router.get(
   '/status/:jobId',
   protect,
@@ -101,13 +103,13 @@ router.get(
       const response = await axios.get(`${AI_SERVICE_URL}/annotate/status/${jobId}`);
       return res.json(response.data);
     } catch (err) {
+      console.error("[DEBUG] Status Poll Failed for Job:", req.params.jobId);
       return res.status(500).json({ error: 'Failed to get job status' });
     }
   }
 );
 
 // GET /api/annotate/download/:jobId
-// Updated to match the new "/annotate/download" route on Hugging Face
 router.get(
   '/download/:jobId',
   protect,
@@ -122,6 +124,7 @@ router.get(
       res.setHeader('Content-Disposition', `attachment; filename="cortexa_${jobId.slice(0, 8)}.zip"`);
       response.data.pipe(res);
     } catch (err) {
+      console.error("[DEBUG] Download Failed for Job:", req.params.jobId);
       return res.status(500).json({ error: 'Download failed' });
     }
   }
