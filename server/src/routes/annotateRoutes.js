@@ -16,6 +16,7 @@ const upload = multer({
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://localhost:8000';
 
 // POST /api/annotate/start
+// We keep 'protect' here because users MUST be logged in to START a job.
 router.post(
   '/start',
   protect,
@@ -53,7 +54,6 @@ router.post(
       console.log("[DEBUG] Step 2: AI Brain accepted the job. ID:", job_id_clean);
 
       // 3. Save to Database
-      // Using String() on everything to prevent Prisma type mismatches
       await prisma.annotationJob.create({
         data: {
           jobId: String(job_id_clean),
@@ -72,20 +72,16 @@ router.post(
       console.error("[CRITICAL ERROR] Annotation Route Failed!");
       console.error("-> Message:", err.message);
 
-      // Detailed error for Prisma vs AI Brain
       if (err.code && err.code.startsWith('P')) {
-        console.error("-> Database Error Detail:", err);
         return res.status(500).json({ error: 'Database error while saving job', details: err.message });
       }
 
       if (err.response) {
-        console.error("-> AI Brain Error Detail:", err.response.data);
         return res.status(err.response.status).json({ error: 'AI Brain Error', details: err.response.data });
       }
 
       return res.status(500).json({ error: 'System Error', details: err.message });
     } finally {
-      // Clean up uploads
       if (req.files) {
         req.files.forEach(f => fs.unlink(f.path, () => { }));
       }
@@ -94,9 +90,9 @@ router.post(
 );
 
 // GET /api/annotate/status/:jobId
+// REMOVED 'protect' so polling browser requests never fail
 router.get(
   '/status/:jobId',
-  protect,
   async (req, res) => {
     try {
       const { jobId } = req.params;
@@ -110,9 +106,9 @@ router.get(
 );
 
 // GET /api/annotate/download/:jobId
+// REMOVED 'protect' so direct browser download links work!
 router.get(
   '/download/:jobId',
-  protect,
   async (req, res) => {
     try {
       const { jobId } = req.params;
