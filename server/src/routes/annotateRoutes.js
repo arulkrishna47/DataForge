@@ -63,7 +63,7 @@ router.post(
         data: {
           jobId: job_id_clean,
           userId: req.user.id,
-          labels: labelArray, // Error fix: Prisma needs an ARRAY, not a string
+          labels: labels, // Error fix: Prisma needs an ARRAY, not a string
           exportFormat: export_format || 'yolo',
           status: 'PROCESSING',
           totalFiles: files.length,
