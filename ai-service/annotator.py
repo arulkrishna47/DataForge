@@ -72,22 +72,11 @@ class ImageAnnotator:
       }
 
     # 2. Perfect Pixel Mapping 
-    # The output 'boxes' is literally (cx, cy, w, h) in range [0,1]
-    # We map this perfectly to the actual image size.
-    boxes_np = boxes.numpy()
-    boxes_xyxy = np.zeros_like(boxes_np)
-    
-    # cx, cy, w, h
-    cx = boxes_np[:, 0]
-    cy = boxes_np[:, 1]
-    bw = boxes_np[:, 2]
-    bh = boxes_np[:, 3]
-    
-    # Absolute Pixels without any "magic" shifts
-    boxes_xyxy[:, 0] = (cx - bw / 2) * w_orig # xmin
-    boxes_xyxy[:, 1] = (cy - bh / 2) * h_orig # ymin
-    boxes_xyxy[:, 2] = (cx + bw / 2) * w_orig # xmax
-    boxes_xyxy[:, 3] = (cy + bh / 2) * h_orig # ymax
+    # Use exact same implementation as Grounding DINO post_process_result
+    from torchvision.ops import box_convert
+    boxes_scaled = boxes * torch.Tensor([w_orig, h_orig, w_orig, h_orig])
+    xyxy = box_convert(boxes=boxes_scaled, in_fmt="cxcywh", out_fmt="xyxy").numpy()
+    boxes_xyxy = xyxy
 
     # Ensure box coordinates are valid
     boxes_xyxy[:, 0] = np.clip(boxes_xyxy[:, 0], 0, w_orig)
