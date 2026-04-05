@@ -74,8 +74,11 @@ class ImageAnnotator:
     # 2. Perfect Pixel Mapping 
     # Use exact same implementation as Grounding DINO post_process_result
     from torchvision.ops import box_convert
-    boxes_scaled = boxes * torch.Tensor([w_orig, h_orig, w_orig, h_orig])
-    xyxy = box_convert(boxes=boxes_scaled, in_fmt="cxcywh", out_fmt="xyxy").numpy()
+    # Use exact same implementation as Grounding DINO post_process_result
+    from torchvision.ops import box_convert
+    scale = torch.Tensor([w_orig, h_orig, w_orig, h_orig]).to(boxes.device)
+    boxes_scaled = boxes * scale
+    xyxy = box_convert(boxes=boxes_scaled, in_fmt="cxcywh", out_fmt="xyxy").cpu().numpy()
     boxes_xyxy = xyxy
 
     # Ensure box coordinates are valid
@@ -85,44 +88,22 @@ class ImageAnnotator:
     boxes_xyxy[:, 3] = np.clip(boxes_xyxy[:, 3], 0, h_orig)
 
     # 3. Process Segmentation Masks via SAM
-    sam_results = self.sam_model(
-      image_source, # Pass image source numpy directly to avoid resize issues
-      bboxes=boxes_xyxy,
-      verbose=False
-    )
-    
+    sam_results = self.sam_model(image_source, bboxes=boxes_xyxy, verbose=False)
     masks = None
     if sam_results[0].masks is not None:
-        # Resize mask to original shape securely
         import torch.nn.functional as F
-        mask_data = sam_results[0].masks.data # shape [N, H, W]
-        if self.device == "cpu":
-            mask_data = mask_data.float()
-        
-        # interpolate back to original size just in case SAM changed it
-        mask_data = F.interpolate(
-            mask_data.unsqueeze(1),
-            size=(h_orig, w_orig),
-            mode="bilinear",
-            align_corners=False
-        ).squeeze(1)
+        mask_data = sam_results[0].masks.data 
+        if self.device == "cpu": mask_data = mask_data.float()
+        mask_data = F.interpolate(mask_data.unsqueeze(1), size=(h_orig, w_orig), mode="bilinear", align_corners=False).squeeze(1)
         masks = (mask_data > 0.5).cpu().numpy()
 
-    # Map phrases to label indices
-    label_to_idx = {
-      label.lower(): i for i, label in enumerate(self.labels)
-    }
-    class_ids = np.array([
-      label_to_idx.get(p.lower(), 0) for p in phrases
-    ])
+    label_to_idx = {label.lower(): i for i, label in enumerate(self.labels)}
+    class_ids = np.array([label_to_idx.get(p.lower(), 0) for p in phrases])
     confidences = logits.numpy()
 
     # Draw annotated preview image
-    annotated = self._draw_annotations(
-      image_source, boxes_xyxy,
-      class_ids, confidences, phrases, masks
-    )
-
+    debug_info = f"W:{w_orig} H:{h_orig} B0:{boxes[0].cpu().numpy().tolist()}"
+    annotated = self._draw_annotations(image_source, boxes_xyxy, class_ids, confidences, phrases, masks, debug_info)
     out_path = Path(output_dir)
 
     # Save preview image
@@ -156,12 +137,14 @@ class ImageAnnotator:
 
   def _draw_annotations(
     self, image, boxes, class_ids,
-    confidences, phrases, masks=None
+    confidences, phrases, masks=None, debug_info=""
   ):
     annotated = image.copy()
     try:
         # GIANT WATERMARK TO PROVE NEW CODE IS RUNNING
-        cv2.putText(annotated, "V4 SERVER RUNNING", (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 0), 5)
+        cv2.putText(annotated, "V4 SERVER RUNNING", (50, 80), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 0), 5)
+        if debug_info:
+            cv2.putText(annotated, debug_info, (50, 160), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
         # Manually Draw Masks to avoid Supervision boolean visual bugs
         if masks is not None:
