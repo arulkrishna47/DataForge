@@ -44,18 +44,30 @@ class ImageAnnotator:
     export_format: str = "yolo"
   ) -> dict:
     from groundingdino.util.inference import load_image, predict
+    import torchvision.transforms as T
 
     image_name = Path(image_path).stem
-    image_source, image = load_image(image_path)
-    h, w = image_source.shape[:2]
+    
+    # 1. Image Loading (Ensure explicit RGB safety)
+    pil_img = Image.open(image_path).convert("RGB")
+    image_source = np.array(pil_img)
+    h_orig, w_orig = image_source.shape[:2]
+
+    # GroundingDINO expects image tensor normalized
+    transform = T.Compose([
+        T.RandomResize([800], max_size=1333),
+        T.ToTensor(),
+        T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+    ])
+    image_tensor, _ = transform(pil_img, None)
 
     # Build text prompt from labels
-    text_prompt = " . ".join(self.labels) + " ."
+    text_prompt = " . ".join([l.lower() for l in self.labels]) + " ."
 
     # Run Grounding DINO detection
     boxes, logits, phrases = predict(
       model=self.grounding_model,
-      image=image,
+      image=image_tensor,
       caption=text_prompt,
       box_threshold=0.35,
       text_threshold=0.25,
@@ -69,22 +81,53 @@ class ImageAnnotator:
         "message": "No objects detected"
       }
 
-    # Convert boxes to xyxy pixel format
-    boxes_xyxy = boxes * torch.tensor(
-      [w, h, w, h], dtype=torch.float32
-    )
-    boxes_xyxy[:, 0] -= boxes_xyxy[:, 2] / 2
-    boxes_xyxy[:, 1] -= boxes_xyxy[:, 3] / 2
-    boxes_xyxy[:, 2] += boxes_xyxy[:, 0]
-    boxes_xyxy[:, 3] += boxes_xyxy[:, 1]
+    # 2. Perfect Pixel Mapping 
+    # The output 'boxes' is literally (cx, cy, w, h) in range [0,1]
+    # We map this perfectly to the actual image size.
+    boxes_np = boxes.numpy()
+    boxes_xyxy = np.zeros_like(boxes_np)
+    
+    # cx, cy, w, h
+    cx = boxes_np[:, 0]
+    cy = boxes_np[:, 1]
+    bw = boxes_np[:, 2]
+    bh = boxes_np[:, 3]
+    
+    # Absolute Pixels without any "magic" shifts
+    boxes_xyxy[:, 0] = (cx - bw / 2) * w_orig # xmin
+    boxes_xyxy[:, 1] = (cy - bh / 2) * h_orig # ymin
+    boxes_xyxy[:, 2] = (cx + bw / 2) * w_orig # xmax
+    boxes_xyxy[:, 3] = (cy + bh / 2) * h_orig # ymax
 
-    # Run SAM 2 for precise segmentation masks
+    # Ensure box coordinates are valid
+    boxes_xyxy[:, 0] = np.clip(boxes_xyxy[:, 0], 0, w_orig)
+    boxes_xyxy[:, 1] = np.clip(boxes_xyxy[:, 1], 0, h_orig)
+    boxes_xyxy[:, 2] = np.clip(boxes_xyxy[:, 2], 0, w_orig)
+    boxes_xyxy[:, 3] = np.clip(boxes_xyxy[:, 3], 0, h_orig)
+
+    # 3. Process Segmentation Masks via SAM
     sam_results = self.sam_model(
-      image_path,
-      bboxes=boxes_xyxy.numpy()
+      image_source, # Pass image source numpy directly to avoid resize issues
+      bboxes=boxes_xyxy,
+      verbose=False
     )
-    masks = sam_results[0].masks.data.cpu().numpy() \
-      if sam_results[0].masks else None
+    
+    masks = None
+    if sam_results[0].masks is not None:
+        # Resize mask to original shape securely
+        import torch.nn.functional as F
+        mask_data = sam_results[0].masks.data # shape [N, H, W]
+        if self.device == "cpu":
+            mask_data = mask_data.float()
+        
+        # interpolate back to original size just in case SAM changed it
+        mask_data = F.interpolate(
+            mask_data.unsqueeze(1),
+            size=(h_orig, w_orig),
+            mode="bilinear",
+            align_corners=False
+        ).squeeze(1)
+        masks = (mask_data > 0.5).cpu().numpy()
 
     # Map phrases to label indices
     label_to_idx = {
@@ -97,7 +140,7 @@ class ImageAnnotator:
 
     # Draw annotated preview image
     annotated = self._draw_annotations(
-      image_source, boxes_xyxy.numpy(),
+      image_source, boxes_xyxy,
       class_ids, confidences, phrases, masks
     )
 
@@ -105,24 +148,24 @@ class ImageAnnotator:
 
     # Save preview image
     preview_path = out_path / "previews" / f"{image_name}_annotated.jpg"
-    preview_path.parent.mkdir(exist_ok=True)
-    cv2.imwrite(str(preview_path), annotated)
+    preview_path.parent.mkdir(exist_ok=True, parents=True)
+    cv2.imwrite(str(preview_path), cv2.cvtColor(annotated, cv2.COLOR_RGB2BGR))
 
     # Export in chosen format
     if export_format == "yolo":
       self._export_yolo(
-        image_name, boxes_xyxy.numpy(),
-        class_ids, w, h, out_path
+        image_name, boxes_xyxy,
+        class_ids, w_orig, h_orig, out_path
       )
     elif export_format == "coco":
       self._export_coco(
-        image_name, image_path, boxes_xyxy.numpy(),
-        class_ids, confidences, masks, w, h, out_path
+        image_name, image_path, boxes_xyxy,
+        class_ids, confidences, masks, w_orig, h_orig, out_path
       )
     elif export_format == "voc":
       self._export_voc(
-        image_name, image_path, boxes_xyxy.numpy(),
-        phrases, w, h, out_path
+        image_name, image_path, boxes_xyxy,
+        phrases, w_orig, h_orig, out_path
       )
 
     return {
@@ -137,35 +180,30 @@ class ImageAnnotator:
     confidences, phrases, masks=None
   ):
     annotated = image.copy()
-    colors = sv.ColorPalette.DEFAULT
+    try:
+        # Manually Draw Masks to avoid Supervision boolean visual bugs
+        if masks is not None:
+            mask_color = np.array([255, 20, 147], dtype=np.uint8) # Pink
+            for m in masks:
+                bool_mask = m > 0
+                blend = annotated.copy()
+                blend[bool_mask] = blend[bool_mask] * 0.5 + mask_color * 0.5
+                annotated = blend
 
-    # Draw masks if available
-    if masks is not None:
-      mask_annotator = sv.MaskAnnotator()
-      detections = sv.Detections(
-        xyxy=boxes,
-        mask=masks.astype(bool),
-        class_id=class_ids,
-        confidence=confidences
-      )
-      annotated = mask_annotator.annotate(annotated, detections)
-
-    # Draw bounding boxes
-    box_annotator = sv.BoxAnnotator(thickness=2)
-    label_annotator = sv.LabelAnnotator()
-    detections = sv.Detections(
-      xyxy=boxes,
-      class_id=class_ids,
-      confidence=confidences
-    )
-    labels = [
-      f"{phrase} {conf:.2f}"
-      for phrase, conf in zip(phrases, confidences)
-    ]
-    annotated = box_annotator.annotate(annotated, detections)
-    annotated = label_annotator.annotate(
-      annotated, detections, labels=labels
-    )
+        # Manually draw explicit precise bounding boxes
+        for i, box in enumerate(boxes):
+            x1, y1, x2, y2 = map(int, box)
+            # Box
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), (255, 20, 147), 2)
+            # Label
+            label = f"{phrases[i]} {confidences[i]:.2f}"
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+            cv2.rectangle(annotated, (x1, max(y1 - th - 5, 0)), (x1 + tw, y1), (255, 20, 147), -1)
+            cv2.putText(annotated, label, (x1, max(y1 - 5, 0)), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
+    except Exception as e:
+        print(f"Draw error manual: {e}")
+        
     return annotated
 
   def _export_yolo(
