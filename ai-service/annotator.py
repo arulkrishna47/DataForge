@@ -171,9 +171,12 @@ class ImageAnnotator:
   ):
     annotated = image.copy()
     try:
+        # GIANT WATERMARK TO PROVE NEW CODE IS RUNNING
+        cv2.putText(annotated, "V4 SERVER RUNNING", (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 0), 5)
+
         # Manually Draw Masks to avoid Supervision boolean visual bugs
         if masks is not None:
-            mask_color = np.array([255, 20, 147], dtype=np.uint8) # Pink
+            mask_color = np.array([0, 255, 0], dtype=np.uint8) # Neon Green Mask
             for m in masks:
                 bool_mask = m > 0
                 blend = annotated.copy()
@@ -183,14 +186,15 @@ class ImageAnnotator:
         # Manually draw explicit precise bounding boxes
         for i, box in enumerate(boxes):
             x1, y1, x2, y2 = map(int, box)
-            # Box
-            cv2.rectangle(annotated, (x1, y1), (x2, y2), (255, 20, 147), 2)
-            # Label
+            # Box in NEON GREEN
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 3)
+            # Label background in Neon Green
             label = f"{phrases[i]} {confidences[i]:.2f}"
-            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-            cv2.rectangle(annotated, (x1, max(y1 - th - 5, 0)), (x1 + tw, y1), (255, 20, 147), -1)
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
+            cv2.rectangle(annotated, (x1, max(y1 - th - 5, 0)), (x1 + tw, y1), (0, 255, 0), -1)
+            # Label text in Black
             cv2.putText(annotated, label, (x1, max(y1 - 5, 0)), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2, cv2.LINE_AA)
     except Exception as e:
         print(f"Draw error manual: {e}")
         
