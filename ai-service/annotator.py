@@ -44,22 +44,12 @@ class ImageAnnotator:
     export_format: str = "yolo"
   ) -> dict:
     from groundingdino.util.inference import load_image, predict
-    import torchvision.transforms as T
 
     image_name = Path(image_path).stem
     
-    # 1. Image Loading (Ensure explicit RGB safety)
-    pil_img = Image.open(image_path).convert("RGB")
-    image_source = np.array(pil_img)
+    # 1. Image Loading (Native DINO method to avoid Transform bugs)
+    image_source, image_tensor = load_image(image_path)
     h_orig, w_orig = image_source.shape[:2]
-
-    # GroundingDINO expects image tensor normalized
-    transform = T.Compose([
-        T.RandomResize([800], max_size=1333),
-        T.ToTensor(),
-        T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
-    ])
-    image_tensor, _ = transform(pil_img, None)
 
     # Build text prompt from labels
     text_prompt = " . ".join([l.lower() for l in self.labels]) + " ."
