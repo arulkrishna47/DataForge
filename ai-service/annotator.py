@@ -75,17 +75,18 @@ class ImageAnnotator:
     
     masks = None
     if sam_results[0].masks is not None:
-        import torch.nn.functional as F
         mask_data = sam_results[0].masks.data 
-        if self.device == "cpu": mask_data = mask_data.float()
-        
-        mask_data = F.interpolate(
-            mask_data.unsqueeze(1),
-            size=(h_orig, w_orig),
-            mode="bilinear",
-            align_corners=False
-        ).squeeze(1)
-        masks = (mask_data > 0.5).cpu().numpy()
+        # Fix 2: Correct mask resizing to prevent bleeding
+        resized_masks = []
+        for mask in mask_data:
+            mask_np = mask.cpu().numpy().astype(np.float32)
+            resized = cv2.resize(
+                mask_np, 
+                (w_orig, h_orig), 
+                interpolation=cv2.INTER_LINEAR
+            )
+            resized_masks.append(resized > 0.5)
+        masks = np.array(resized_masks)
 
     # Create the preview
     phrases = [self.labels[cid] if cid is not None else "object" for cid in detections.class_id]
@@ -95,6 +96,12 @@ class ImageAnnotator:
     )
 
     out_path = Path(output_dir)
+    out_path.mkdir(exist_ok=True, parents=True)
+
+    # Fix 4: Save classes file so user knows label indices
+    classes_file = out_path / "classes.txt"
+    with open(classes_file, "w") as f:
+        f.write("\n".join(self.labels))
     preview_path = out_path / "previews" / f"{image_name}_annotated.jpg"
     preview_path.parent.mkdir(exist_ok=True, parents=True)
     # Save as BGR for imwrite
@@ -115,27 +122,84 @@ class ImageAnnotator:
       "preview": str(preview_path)
     }
 
-  def _draw_annotations(self, image, boxes, class_ids, confidences, phrases, masks=None):
+  def _draw_annotations(
+    self, image, boxes, class_ids, 
+    confidences, phrases, masks=None
+  ):
     annotated = image.copy()
+    
+    # Fix 3: Color palette - different color per class
+    COLORS = [
+        (255, 56, 56),   # Red
+        (56, 56, 255),   # Blue  
+        (56, 255, 56),   # Green
+        (255, 157, 56),  # Orange
+        (157, 56, 255),  # Purple
+        (56, 255, 157),  # Teal
+        (255, 56, 157),  # Pink
+        (255, 255, 56),  # Yellow
+    ]
+    
     try:
+        # Draw segmentation masks first (underneath boxes)
         if masks is not None:
-            mask_color = np.array([0, 255, 0], dtype=np.uint8) # Neon Green
-            for m in masks:
-                bool_mask = m > 0
-                blend = annotated.copy()
-                blend[bool_mask] = blend[bool_mask] * 0.5 + mask_color * 0.5
-                annotated = blend
+            for i, mask in enumerate(masks):
+                # Safe indexing for category color
+                cid = int(class_ids[i]) if class_ids[i] is not None else 0
+                color = COLORS[cid % len(COLORS)]
+                bool_mask = mask.astype(bool)
+                
+                # Only color the masked region, not whole image
+                colored = np.zeros_like(annotated)
+                colored[bool_mask] = color
+                
+                # Blend only where mask is true
+                annotated = np.where(
+                    bool_mask[:, :, np.newaxis],
+                    cv2.addWeighted(annotated, 0.6, colored, 0.4, 0),
+                    annotated
+                )
 
+        # Draw bounding boxes and labels
         for i, box in enumerate(boxes):
             x1, y1, x2, y2 = map(int, box)
-            cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cid = int(class_ids[i]) if class_ids[i] is not None else 0
+            color = COLORS[cid % len(COLORS)]
             label = f"{phrases[i]} {confidences[i]:.2f}"
-            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-            cv2.rectangle(annotated, (x1, max(y1-th-5, 0)), (x1+tw, y1), (0, 255, 0), -1)
-            cv2.putText(annotated, label, (x1, max(y1-5, 0)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 1, cv2.LINE_AA)
             
+            # Draw box
+            cv2.rectangle(
+                annotated, (x1, y1), (x2, y2), 
+                color, 2
+            )
+            
+            # Draw label background
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.55
+            thickness = 1
+            (tw, th), baseline = cv2.getTextSize(
+                label, font, font_scale, thickness
+            )
+            label_y = max(y1 - 5, th + 5)
+            cv2.rectangle(
+                annotated,
+                (x1, label_y - th - baseline - 4),
+                (x1 + tw + 4, label_y),
+                color, -1
+            )
+            
+            # Draw label text in white
+            cv2.putText(
+                annotated, label,
+                (x1 + 2, label_y - baseline - 2),
+                font, font_scale,
+                (255, 255, 255), thickness,
+                cv2.LINE_AA
+            )
+
     except Exception as e:
         print(f"Draw error: {e}")
+    
     return annotated
 
   def _export_yolo(self, name, boxes, class_ids, w, h, out_dir):
