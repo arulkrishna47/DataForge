@@ -38,44 +38,27 @@ const RequestProject = () => {
 
     try {
       if (!user) {
-        // --- NEW GUEST FLOW (uses Supabase auth directly) ---
-        // 1. Sign up through Supabase so they have a valid session
-        const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+        // 1. Register through your SERVER API (not direct Supabase)
+        // This creates the user in your DB and generates a session cookie automatically
+        const regRes = await api.post('/auth/register', {
+          firstName: formData.firstName,
+          lastName: formData.lastName,
           email: formData.email,
           password: formData.password,
-          options: {
-            data: {
-              first_name: formData.firstName,
-              last_name: formData.lastName,
-              full_name: `${formData.firstName} ${formData.lastName}`,
-              role: 'client',
-            }
-          }
+          role: 'CLIENT'
         });
 
-        if (signUpError) throw new Error(signUpError.message);
-
-        // 2. Get the session token from the newly created account
-        const { data: sessionData } = await supabase.auth.getSession();
-        const token = sessionData?.session?.access_token;
-
-        if (!token) {
-          // Supabase requires email confirmation - tell user and redirect
-          setIsSuccess(true);
-          return;
-        }
-
-        // 3. Submit service request using the Supabase bearer token
+        // 2. Submit the service request (the session is now active)
         await api.post('/services', {
           serviceType: formData.serviceType,
           scope: formData.scope,
           timeline: formData.timeline,
           budget: formData.budget,
+          email: formData.email, // Added for guest identification
         });
         
-        toast.success('Request submitted! Please check your email to confirm your account.');
+        toast.success('Request submitted! Check email for verification.');
         setIsSuccess(true);
-
       } else {
         // --- LOGGED-IN USER FLOW ---
         await api.post('/services', {

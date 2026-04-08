@@ -179,7 +179,12 @@ const handleContactInquiry = async (req, res) => {
   const { message } = req.body;
   if (!message) return res.status(400).json({ message: 'Message is required.' });
   
-  await sendContactEmail({ message });
+  try {
+    await sendContactEmail({ message });
+    console.log('✅ Contact inquiry email sent to admin.');
+  } catch (error) {
+    console.error('❌ Failed to send contact inquiry:', error.message);
+  }
   res.json({ message: 'Success' });
 };
 

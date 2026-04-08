@@ -5,30 +5,41 @@ const { sendNewServiceRequestAdminEmail, sendProjectAcceptedEmail, sendRequestAc
 // @route POST /api/services
 // @access Private (Client)
 const createServiceRequest = async (req, res) => {
+  console.log('🚀 [HEARTBEAT] New service request incoming!');
   const { serviceType, scope, timeline, budget } = req.body;
   
   console.log('User attempting to create service request:', req.user.email);
   console.log('Payload:', { serviceType, scope, timeline, budget });
 
   try {
+    let finalClientId = req.user?.id;
+    let currentUser = req.user;
+
+    // For guests who just registered, find them by the email they submitted
+    if (!finalClientId && req.body.email) {
+      currentUser = await prisma.user.findUnique({ where: { email: req.body.email } });
+      finalClientId = currentUser?.id;
+    }
+
     const serviceRequest = await prisma.serviceRequest.create({
       data: {
         serviceType,
         scope,
         timeline,
         budget: budget || 'N/A',
-        clientId: req.user.id,
+        clientId: finalClientId || '00000000-0000-0000-0000-000000000000', // System account fallback
       },
     });
     console.log('Successfully created service request:', serviceRequest.id);
 
-    // Fire and forget email notification to avoid blocking client response
+    // Send email notification to admin
     const adminEmailToNotify = process.env.ADMIN_EMAIL || 'cortexa.services@gmail.com';
-    sendNewServiceRequestAdminEmail(adminEmailToNotify, serviceRequest, req.user).then(() => {
-        console.log('Admin notification sent to:', adminEmailToNotify);
-    }).catch(error => {
-        console.error('Error sending admin notification:', error.message);
-    });
+    try {
+        await sendNewServiceRequestAdminEmail(adminEmailToNotify, serviceRequest, currentUser || { email: 'Guest User' });
+        console.log('✅ Admin notification successfully sent to:', adminEmailToNotify);
+    } catch (error) {
+        console.error('❌ Failed to send admin notification:', error.message);
+    }
 
     res.status(201).json(serviceRequest);
   } catch (err) {

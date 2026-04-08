@@ -1,12 +1,15 @@
 const nodemailer = require('nodemailer');
 
 const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'smtp.ethereal.email',
-  port: process.env.SMTP_PORT || 587,
+  host: process.env.SMTP_HOST || 'smtp.gmail.com',
+  port: 465, // Use 465 for Production (often bypasses blocks that hit 587)
+  secure: true, // MUST be true for port 465
   auth: {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
   },
+  connectionTimeout: 10000, // 10 seconds
+  greetingTimeout: 10000,
 });
 
 const sendProjectAcceptedEmail = async (user, project) => {
@@ -40,7 +43,7 @@ const sendDeliverableUploadedEmail = async (user, project, deliverable) => {
 const sendEmail = async (to, subject, html) => {
   try {
     const info = await transporter.sendMail({
-      from: `"Cortexa | AI Platform" <${process.env.SMTP_USER || 'no-reply@cortexa.ai'}>`,
+      from: process.env.SMTP_USER, // Simplified to avoid Gmail phishing filters
       to,
       subject,
       html,
@@ -80,6 +83,7 @@ const sendRequestDeclinedEmail = async (clientEmail, clientName, serviceName) =>
 
 const sendNewServiceRequestAdminEmail = async (adminEmail, request, clientInfo) => {
   const baseUrl = process.env.VITE_API_URL || 'http://localhost:5000/api';
+  console.log(`[EMAIL_DEBUG] Sending admin notification for client: ${clientInfo.email || 'UNKNOWN'}`);
   const html = `
     <div style="background-color: #0F172A; color: #ffffff; padding: 40px; font-family: sans-serif; border-radius: 10px;">
       <h1 style="color: #C17BFF; font-size: 24px; border-bottom: 2px solid #C17BFF; padding-bottom: 10px; margin-bottom: 30px;">New Service Request Submitted</h1>
@@ -95,9 +99,8 @@ const sendNewServiceRequestAdminEmail = async (adminEmail, request, clientInfo) 
       </div>
       
       <div style="margin-top: 40px; border-top: 1px solid #1E293B; padding-top: 20px;">
-        <p style="font-size: 14px; color: #94a3b8; margin-bottom: 20px;">Quick Actions:</p>
-        <a href="${baseUrl}/services/action/${request.id}/accept" style="background-color: #22C55E; color: #ffffff; padding: 12px 25px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 13px; margin-right: 15px; display: inline-block;">ACCEPT REQUEST</a>
-        <a href="${baseUrl}/services/action/${request.id}/decline" style="background-color: #EF4444; color: #ffffff; padding: 12px 25px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 13px; display: inline-block;">DECLINE REQUEST</a>
+        <p style="font-size: 14px; color: #94a3b8; margin-bottom: 20px;">Action Required:</p>
+        <p style="color: #ffffff; font-size: 14px;">Log in to the <strong>Admin Dashboard</strong> to Accept or Decline this request.</p>
       </div>
 
       <p style="margin-top: 30px;"><a href="${process.env.VITE_URL || 'http://localhost:5174'}/admin" style="color: #C17BFF; text-decoration: underline; font-size: 13px;">Open Admin Dashboard</a></p>
