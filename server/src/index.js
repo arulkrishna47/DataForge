@@ -62,7 +62,11 @@ app.use('/api/annotate', annotateRoutes);
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date() });
+  res.json({ 
+    status: 'ok', 
+    version: '1.0.14-DEBUG', // If you see this, the server is updated
+    timestamp: new Date() 
+  });
 });
 
 // Basic route
