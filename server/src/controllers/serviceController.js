@@ -32,19 +32,16 @@ const createServiceRequest = async (req, res) => {
     });
     console.log('Successfully created service request:', serviceRequest.id);
 
-    // Send email notification to admin
+    // Send email notification to admin (Non-blocking to prevent 500 errors)
     const adminEmailToNotify = process.env.ADMIN_EMAIL || 'cortexa.services@gmail.com';
-    try {
-        await sendNewServiceRequestAdminEmail(adminEmailToNotify, serviceRequest, currentUser || { email: 'Guest User' });
-        console.log('✅ Admin notification successfully sent to:', adminEmailToNotify);
-    } catch (error) {
-        console.error('❌ Failed to send admin notification:', error.message);
-    }
+    sendNewServiceRequestAdminEmail(adminEmailToNotify, serviceRequest, currentUser || { email: 'Guest User' })
+        .then(() => console.log('✅ Admin notification sent to:', adminEmailToNotify))
+        .catch(err => console.error('❌ SMTP Error (Handled):', err.message));
 
-    res.status(201).json(serviceRequest);
+    return res.status(201).json(serviceRequest);
   } catch (err) {
-    console.error('Failed to create service request in DB:', err.message);
-    res.status(500).json({ message: 'Database submission failed', error: err.message });
+    console.error('🚀 [CRITICAL] Service Request Failed:', err.message);
+    return res.status(500).json({ message: 'Server error', error: err.message });
   }
 };
 
