@@ -15,10 +15,23 @@ const createServiceRequest = async (req, res) => {
     let finalClientId = req.user?.id;
     let currentUser = req.user;
 
-    // For guests who just registered, find them by the email they submitted
+    // Retry logic for guests (handles the race condition if register is still committing)
     if (!finalClientId && req.body.email) {
+      console.log(`[DB_DEBUG] Searching for user: ${req.body.email}`);
       currentUser = await prisma.user.findUnique({ where: { email: req.body.email } });
+      
+      if (!currentUser) {
+        console.log('[DB_DEBUG] User not found yet, waiting 1s for commit...');
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        currentUser = await prisma.user.findUnique({ where: { email: req.body.email } });
+      }
+      
       finalClientId = currentUser?.id;
+    }
+
+    if (!finalClientId) {
+       console.error('[CRITICAL] No Client ID found for request. Body:', JSON.stringify(req.body));
+       return res.status(400).json({ message: 'User account not found. Please ensure registration is complete.' });
     }
 
     const serviceRequest = await prisma.serviceRequest.create({
@@ -27,21 +40,23 @@ const createServiceRequest = async (req, res) => {
         scope,
         timeline,
         budget: budget || 'N/A',
-        clientId: finalClientId || '00000000-0000-0000-0000-000000000000', // System account fallback
+        clientId: finalClientId,
       },
     });
-    console.log('Successfully created service request:', serviceRequest.id);
 
-    // Send email notification to admin (Non-blocking to prevent 500 errors)
+    // Send email notification to admin (Non-blocking)
     const adminEmailToNotify = process.env.ADMIN_EMAIL || 'cortexa.services@gmail.com';
     sendNewServiceRequestAdminEmail(adminEmailToNotify, serviceRequest, currentUser || { email: 'Guest User' })
-        .then(() => console.log('✅ Admin notification sent to:', adminEmailToNotify))
-        .catch(err => console.error('❌ SMTP Error (Handled):', err.message));
+        .then(() => console.log('✅ Admin notification sent'))
+        .catch(err => console.error('❌ SMTP Error:', err.message));
 
     return res.status(201).json(serviceRequest);
   } catch (err) {
     console.error('🚀 [CRITICAL] Service Request Failed:', err.message);
-    return res.status(500).json({ message: 'Server error', error: err.message });
+    return res.status(500).json({ 
+        message: 'Request failed to save. Please try again.',
+        debug: err.message // Now you will see the REAL error in your browser
+    });
   }
 };
 
