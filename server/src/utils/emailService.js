@@ -1,117 +1,89 @@
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'smtp.gmail.com',
-  port: 465, // Switching to SSL port
-  secure: true, // true for 465, false for other ports
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-  connectionTimeout: 15000,
-  greetingTimeout: 15000,
-  socketTimeout: 30000,
-});
+// Initialize Resend with API Key
+const resend = new Resend(process.env.RESEND_API_KEY);
+
+/**
+ * Resend has a strict "From" address policy. 
+ * Since we haven't verified a custom domain yet, we use their default sender.
+ * This will reliably deliver to your inbox (cortexa.services@gmail.com).
+ */
+const DEFAULT_SENDER = 'Cortexa <onboarding@resend.dev>';
+
+const sendEmail = async (to, subject, html) => {
+  try {
+    console.log(`[RESEND] Attempting to send [${subject}] to [${to}]`);
+    
+    const { data, error } = await resend.emails.send({
+      from: DEFAULT_SENDER,
+      to: [to],
+      subject: subject,
+      html: html,
+    });
+
+    if (error) {
+      console.error('[RESEND_ERROR]', error);
+      throw error;
+    }
+
+    console.log(`[RESEND_SUCCESS] Message sent! ID: ${data.id}`);
+    return {
+        messageId: data.id,
+        accepted: [to],
+        rejected: []
+    };
+  } catch (err) {
+    console.error(`[RESEND_FAILURE] Failed to send [${subject}] to [${to}].`, err.message);
+    throw err;
+  }
+};
 
 const sendProjectAcceptedEmail = async (user, project) => {
   const html = `
     <div style="background-color: #0F172A; color: #ffffff; padding: 40px; font-family: sans-serif; border-radius: 10px;">
-      <h1 style="color: #C17BFF; font-size: 24px; border-bottom: 2px solid #C17BFF; padding-bottom: 10px; margin-bottom: 30px;">Project Initiated: ${project.title}</h1>
-      <p style="font-size: 16px; line-height: 1.6;">Hello <strong>${user.name || user.email.split('@')[0]}</strong>,</p>
-      <p style="font-size: 16px; line-height: 1.6;">Your project <strong>${project.title}</strong> has been officially initiated. Our team is now working on your requirements.</p>
-      <div style="margin-top: 40px;">
-        <a href="${process.env.VITE_URL || 'http://localhost:5174'}/dashboard" style="background-color: #C17BFF; color: #ffffff; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 14px; letter-spacing: 1px; text-transform: uppercase;">View Project Status</a>
+      <h1 style="color: #C17BFF; font-size: 24px; border-bottom: 2px solid #C17BFF; padding-bottom: 10px; margin-bottom: 30px;">Project Accepted!</h1>
+      <p style="font-size: 16px;">Hello ${user.name},</p>
+      <p style="font-size: 16px;">Your service request for <strong>${project.serviceType}</strong> has been accepted.</p>
+      <p style="font-size: 16px;">Our team will reach out to you shortly with more details.</p>
+      <div style="margin-top: 30px; border-top: 1px solid #1E293B; padding-top: 20px;">
+        <p style="color: #94a3b8; font-size: 12px;">Thank you for choosing Cortexa.</p>
       </div>
     </div>
   `;
-  await sendEmail(user.email, `Cortexa: Project Initiated [${project.title}]`, html);
+  await sendEmail(user.email, `Good news! Your project was accepted`, html);
 };
 
-const sendDeliverableUploadedEmail = async (user, project, deliverable) => {
+const sendProjectDeclinedEmail = async (user, project) => {
   const html = `
     <div style="background-color: #0F172A; color: #ffffff; padding: 40px; font-family: sans-serif; border-radius: 10px;">
-      <h1 style="color: #C17BFF; font-size: 24px; border-bottom: 2px solid #C17BFF; padding-bottom: 10px; margin-bottom: 30px;">New Deliverable Available</h1>
-      <p style="font-size: 16px; line-height: 1.6;">Hello <strong>${user.name || user.email.split('@')[0]}</strong>,</p>
-      <p style="font-size: 16px; line-height: 1.6;">A new asset <strong>${deliverable.title}</strong> has been uploaded to your project <strong>${project.title}</strong>.</p>
-      <div style="margin-top: 40px;">
-        <a href="${process.env.VITE_URL || 'http://localhost:5174'}/dashboard" style="background-color: #C17BFF; color: #ffffff; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 14px; letter-spacing: 1px; text-transform: uppercase;">Download Assets</a>
-      </div>
+      <h1 style="color: #EF4444; font-size: 24px; border-bottom: 2px solid #EF4444; padding-bottom: 10px; margin-bottom: 30px;">Project Update</h1>
+      <p style="font-size: 16px;">Hello ${user.name},</p>
+      <p style="font-size: 16px;">We reviewed your service request for <strong>${project.serviceType}</strong> and unfortunately, we won't be able to fulfill it at this time.</p>
+      <p style="font-size: 16px;">You can log in to your dashboard to view more details or submit a revised request.</p>
     </div>
   `;
-  await sendEmail(user.email, `New Asset Uploaded: ${deliverable.title}`, html);
-};
-
-const sendEmail = async (to, subject, html) => {
-  try {
-    const info = await transporter.sendMail({
-      from: `"Cortexa Platform" <${process.env.SMTP_USER}>`,
-      to,
-      replyTo: process.env.SMTP_USER,
-      subject,
-      html,
-    });
-    console.log(`Email Service: Sent [${subject}] to [${to}]. Id: ${info.messageId}. Accepted: ${info.accepted}. Rejected: ${info.rejected}`);
-    return info; // Return info for debugging
-  } catch (err) {
-    console.error(`Email Service Error: [${subject}] to [${to}] failed.`, err.message);
-    throw err; // Re-throw so the controller knows it failed
-  }
-};
-
-const sendRequestAcceptedEmail = async (clientEmail, clientName, serviceName) => {
-  const html = `
-    <div style="background-color: #0F172A; color: #ffffff; padding: 40px; font-family: sans-serif; border-radius: 10px;">
-      <h1 style="color: #22C55E; font-size: 24px; border-bottom: 2px solid #22C55E; padding-bottom: 10px; margin-bottom: 30px;">Service Request Accepted</h1>
-      <p style="font-size: 16px; line-height: 1.6;">Hello <strong>${clientName}</strong>,</p>
-      <p style="font-size: 16px; line-height: 1.6;">Your request for <strong>${serviceName}</strong> has been <strong>ACCEPTED</strong> by our team.</p>
-      <p style="font-size: 16px; line-height: 1.6;">Our team will now begin the production phase. You can track all updates directly in your dashboard.</p>
-      <div style="margin-top: 40px;">
-        <a href="${process.env.VITE_URL || 'http://localhost:5174'}/dashboard" style="background-color: #C17BFF; color: #ffffff; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 14px; letter-spacing: 1px; text-transform: uppercase;">Go To Dashboard</a>
-      </div>
-    </div>
-  `;
-  await sendEmail(clientEmail, `Your Cortexa Request for ${serviceName} was Accepted!`, html);
-};
-
-const sendRequestDeclinedEmail = async (clientEmail, clientName, serviceName) => {
-  const html = `
-    <div style="background-color: #0F172A; color: #ffffff; padding: 40px; font-family: sans-serif; border-radius: 10px;">
-      <h1 style="color: #EF4444; font-size: 24px; border-bottom: 2px solid #EF4444; padding-bottom: 10px; margin-bottom: 30px;">Service Request Update</h1>
-      <p style="font-size: 16px; line-height: 1.6;">Hello <strong>${clientName}</strong>,</p>
-      <p style="font-size: 16px; line-height: 1.6;">Thank you for your interest in <strong>${serviceName}</strong>. At this time, we are unable to proceed with your specific requirement as submitted.</p>
-      <p style="font-size: 16px; line-height: 1.6;">You can log in to your dashboard to view more details or submit a revised request.</p>
-    </div>
-  `;
-  await sendEmail(clientEmail, `Update regarding your Cortexa request for ${serviceName}`, html);
+  await sendEmail(user.email, `Update regarding your Cortexa request`, html);
 };
 
 const sendNewServiceRequestAdminEmail = async (adminEmail, request, clientInfo) => {
-  const baseUrl = process.env.VITE_API_URL || 'http://localhost:5000/api';
-  console.log(`[EMAIL_DEBUG] Sending admin notification for client: ${clientInfo.email || 'UNKNOWN'}`);
+  const baseUrl = process.env.VITE_API_URL || 'https://cortexa-server-7u1x.onrender.com/api';
   const html = `
     <div style="background-color: #0F172A; color: #ffffff; padding: 40px; font-family: sans-serif; border-radius: 10px;">
       <h1 style="color: #C17BFF; font-size: 24px; border-bottom: 2px solid #C17BFF; padding-bottom: 10px; margin-bottom: 30px;">New Service Request Submitted</h1>
-      <p style="font-size: 16px; line-height: 1.6;">Hello Admin,</p>
-      <p style="font-size: 16px; line-height: 1.6;">A new service request has been submitted by <strong>${clientInfo.name || clientInfo.email.split('@')[0]}</strong> (${clientInfo.email}).</p>
+      <p style="font-size: 16px;">Hello Admin,</p>
+      <p style="font-size: 16px;">A new service request has been submitted by <strong>${clientInfo.name || clientInfo.email}</strong>.</p>
       
       <div style="background-color: #1E293B; padding: 25px; border-radius: 12px; margin: 30px 0; border: 1px solid #334155;">
-        <p style="margin: 0; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; color: #94a3b8;">Request Details</p>
-        <p style="margin: 10px 0 0 0; font-size: 18px; color: #ffffff; font-weight: bold;">Type: ${request.serviceType}</p>
+        <p style="margin: 0; font-size: 18px; color: #ffffff; font-weight: bold;">Type: ${request.serviceType}</p>
         <p style="margin: 10px 0 0 0; font-size: 16px; color: #cbd5e1;">Scope: ${request.scope}</p>
         <p style="margin: 5px 0 0 0; font-size: 16px; color: #cbd5e1;">Timeline: ${request.timeline}</p>
         <p style="margin: 5px 0 0 0; font-size: 16px; color: #cbd5e1;">Budget: ${request.budget}</p>
       </div>
       
-      <div style="margin-top: 40px; border-top: 1px solid #1E293B; padding-top: 20px;">
-        <p style="font-size: 14px; color: #94a3b8; margin-bottom: 20px;">Quick Actions:</p>
-        <div style="margin: 20px 0;">
-          <a href="${baseUrl}/services/action/${request.id}/accept" style="display: inline-block; background-color: #22C55E; color: white; padding: 12px 25px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 14px; margin-right: 10px;">Accept Request</a>
-          <a href="${baseUrl}/services/action/${request.id}/decline" style="display: inline-block; background-color: #EF4444; color: white; padding: 12px 25px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 14px;">Decline Request</a>
-        </div>
-        <p style="color: #94a3b8; font-size: 12px; margin-top: 20px;">Or log in to the <strong>Admin Dashboard</strong> for full management.</p>
+      <div style="margin-top: 40px;">
+        <a href="${baseUrl}/services/action/${request.id}/accept" style="display: inline-block; background-color: #22C55E; color: white; padding: 12px 25px; text-decoration: none; border-radius: 8px; font-weight: bold; margin-right: 10px;">Accept Request</a>
+        <a href="${baseUrl}/services/action/${request.id}/decline" style="display: inline-block; background-color: #EF4444; color: white; padding: 12px 25px; text-decoration: none; border-radius: 8px; font-weight: bold;">Decline Request</a>
       </div>
-
-      <p style="margin-top: 30px;"><a href="${process.env.VITE_URL || 'http://localhost:5174'}/admin" style="color: #C17BFF; text-decoration: underline; font-size: 13px;">Open Admin Dashboard</a></p>
     </div>
   `;
   return await sendEmail(adminEmail, `New Service Request: ${request.serviceType}`, html);
@@ -120,44 +92,16 @@ const sendNewServiceRequestAdminEmail = async (adminEmail, request, clientInfo) 
 const sendVerificationEmail = async (email, otp) => {
   const html = `
     <div style="background-color: #0F172A; color: #ffffff; padding: 40px; font-family: sans-serif; border-radius: 10px;">
-      <h1 style="color: #C17BFF; font-size: 24px; border-bottom: 2px solid #C17BFF; padding-bottom: 10px; margin-bottom: 30px;">Verify Your Email</h1>
-      <p style="font-size: 16px; line-height: 1.6;">Hello!</p>
-      <p style="font-size: 16px; line-height: 1.6;">Thank you for registering at Cortexa. Please use the following One-Time Password to verify your email address:</p>
-      
-      <div style="background-color: #1E293B; padding: 25px; border-radius: 12px; margin: 30px 0; border: 1px solid #334155; text-align: center;">
-        <p style="margin: 0; font-size: 32px; color: #ffffff; font-weight: bold; letter-spacing: 5px;">${otp}</p>
-      </div>
-      
-      <p style="font-size: 16px; line-height: 1.6;">This code is valid for 10 minutes.</p>
+      <h1 style="color: #C17BFF; font-size: 24px; border-bottom: 2px solid #C17BFF; padding-bottom: 10px; margin-bottom: 30px;">Verify your email</h1>
+      <p style="font-size: 16px;">Your verification code is: <strong style="font-size: 32px; color: #C17BFF;">${otp}</strong></p>
     </div>
   `;
-  await sendEmail(email, `Cortexa Verification Code: ${otp}`, html);
-};
-
-const sendContactEmail = async (messageData) => {
-  const adminEmail = process.env.ADMIN_EMAIL || process.env.SMTP_USER; // Send to admin
-  const html = `
-    <div style="background-color: #0F172A; color: #ffffff; padding: 40px; font-family: sans-serif; border-radius: 10px;">
-      <h1 style="color: #C17BFF; font-size: 24px; border-bottom: 2px solid #C17BFF; padding-bottom: 10px; margin-bottom: 30px;">New Contact Form Message</h1>
-      <p style="font-size: 16px; line-height: 1.6;">You have received a new message from the Cortexa contact form:</p>
-      
-      <div style="background-color: #1E293B; padding: 25px; border-radius: 12px; margin: 30px 0; border: 1px solid #334155;">
-        <p style="margin: 0; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; color: #94a3b8;">User Message</p>
-        <p style="margin: 15px 0 0 0; font-size: 16px; color: #ffffff; line-height: 1.6;">${messageData.message}</p>
-      </div>
-
-       <p style="font-size: 14px; color: #64748B;">Sent from: Anonymous / Public User</p>
-    </div>
-  `;
-  await sendEmail(adminEmail, `Cortexa Support: New Message`, html);
+  await sendEmail(email, 'Cortexa Email Verification', html);
 };
 
 module.exports = {
   sendProjectAcceptedEmail,
-  sendDeliverableUploadedEmail,
+  sendProjectDeclinedEmail,
   sendNewServiceRequestAdminEmail,
-  sendVerificationEmail,
-  sendRequestAcceptedEmail,
-  sendRequestDeclinedEmail,
-  sendContactEmail,
+  sendVerificationEmail
 };
