@@ -54,6 +54,15 @@ const projectRoutes = require('./routes/projectRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const annotateRoutes = require('./routes/annotateRoutes');
 
+// Root route for version tracking
+app.get('/', (req, res) => {
+  res.json({ 
+    status: 'Cortexa API is running', 
+    version: '1.0.5-debug',
+    last_update: '2026-04-11 11:15 AM' 
+  });
+});
+
 app.use('/api/auth', authRoutes);
 app.use('/api/services', serviceRoutes);
 app.use('/api/projects', projectRoutes);
