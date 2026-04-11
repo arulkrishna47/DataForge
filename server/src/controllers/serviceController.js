@@ -194,7 +194,9 @@ const scanNetwork = async (req, res) => {
     const targets = [
         { host: 'smtp.gmail.com', port: 587 },
         { host: 'smtp.gmail.com', port: 465 },
-        { host: 'smtp.gmail.com', port: 25 },
+        { host: 'smtp.mailtrap.io', port: 2525 },
+        { host: 'smtp.sendgrid.net', port: 2525 },
+        { host: 'google.com', port: 443 },
         { host: 'google.com', port: 80 }
     ];
 
