@@ -1,5 +1,5 @@
 const prisma = require('../db');
-const { sendNewServiceRequestAdminEmail, sendProjectAcceptedEmail, sendRequestAcceptedEmail, sendRequestDeclinedEmail } = require('../utils/emailService');
+const { sendNewServiceRequestAdminEmail, sendProjectAcceptedEmail, sendProjectDeclinedEmail } = require('../utils/emailService');
 
 // @desc Create service request
 // @route POST /api/services
@@ -97,10 +97,12 @@ const updateServiceRequestStatus = async (req, res) => {
 
     if (updated.client) {
       const clientName = updated.client.name || updated.client.email.split('@')[0];
+      const clientObj = { name: clientName, email: updated.client.email };
+      
       if (status === 'Accepted') {
-        await sendRequestAcceptedEmail(updated.client.email, clientName, updated.serviceType);
+        await sendProjectAcceptedEmail(clientObj, updated);
       } else if (status === 'Declined') {
-        await sendRequestDeclinedEmail(updated.client.email, clientName, updated.serviceType);
+        await sendProjectDeclinedEmail(clientObj, updated);
       }
     }
 
@@ -125,11 +127,12 @@ const handleQuickAction = async (req, res) => {
     });
 
     const clientName = updated.client.name || updated.client.email.split('@')[0];
+    const clientObj = { name: clientName, email: updated.client.email };
 
     if (action === 'accept') {
-      await sendRequestAcceptedEmail(updated.client.email, clientName, updated.serviceType);
+      await sendProjectAcceptedEmail(clientObj, updated);
     } else {
-      await sendRequestDeclinedEmail(updated.client.email, clientName, updated.serviceType);
+      await sendProjectDeclinedEmail(clientObj, updated);
     }
 
     res.send(`
