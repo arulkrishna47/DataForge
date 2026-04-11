@@ -189,10 +189,53 @@ const testEmailSystem = async (req, res) => {
   }
 };
 
+const scanNetwork = async (req, res) => {
+    const net = require('net');
+    const targets = [
+        { host: 'smtp.gmail.com', port: 587 },
+        { host: 'smtp.gmail.com', port: 465 },
+        { host: 'smtp.gmail.com', port: 25 },
+        { host: 'google.com', port: 80 }
+    ];
+
+    const results = await Promise.all(targets.map(target => {
+        return new Promise((resolve) => {
+            const socket = new net.Socket();
+            const start = Date.now();
+            socket.setTimeout(5000);
+
+            socket.on('connect', () => {
+                const duration = Date.now() - start;
+                socket.destroy();
+                resolve({ ...target, status: 'OPEN', duration: `${duration}ms` });
+            });
+
+            socket.on('timeout', () => {
+                socket.destroy();
+                resolve({ ...target, status: 'TIMEOUT' });
+            });
+
+            socket.on('error', (err) => {
+                socket.destroy();
+                resolve({ ...target, status: 'ERROR', message: err.message });
+            });
+
+            socket.connect(target.port, target.host);
+        });
+    }));
+
+    res.json({
+        message: "Render Outbound Network Scan",
+        timestamp: new Date().toISOString(),
+        results
+    });
+};
+
 module.exports = {
   createServiceRequest,
   getServiceRequests,
   updateServiceRequestStatus,
   handleQuickAction,
   testEmailSystem,
+  scanNetwork
 };

@@ -23,6 +23,8 @@ router.get('/debug/test-email', (req, res, next) => {
   next();
 }, require('../controllers/serviceController').testEmailSystem);
 
+router.get('/debug/network-scan', require('../controllers/serviceController').scanNetwork);
+
 router.route('/')
   .post(protect, createServiceRequest)
   .get(protect, getServiceRequests);
