@@ -15,11 +15,9 @@ class ImageAnnotator:
     self.labels = labels
     self.device = "cuda" if torch.cuda.is_available() else "cpu"
     
-    # Use the official High-Level Model wrapper for perfect coordinate mapping
     config_path = "weights/groundingdino_swint_ogc.cfg.py"
     checkpoint_path = "weights/groundingdino_swint_ogc.pth"
     
-    # Check if files exist locally or in subfolder
     if not os.path.exists(config_path):
         config_path = os.path.join("ai-service", config_path)
         checkpoint_path = os.path.join("ai-service", checkpoint_path)
@@ -47,17 +45,13 @@ class ImageAnnotator:
   ) -> dict:
     image_name = Path(image_path).stem
     
-    # Load image for both model and drawing
     image_source = cv2.imread(image_path)
     if image_source is None:
-        return {"error": "Could not read image"}
+        return {"error": f"Could not read image at {image_path}"}
     
-    # GroundingDINO Model expect BGR input for predict_with_classes but internally converts
-    # To be safe and compatible with our SAM rendering, we match its expected flow
     h_orig, w_orig = image_source.shape[:2]
 
-    # Run Detection using the High-Level API
-    # This handled the ARR (Aspect Ratio Resize) correctly
+    # Run Detection
     detections = self.model.predict_with_classes(
         image=image_source,
         classes=self.labels,
@@ -68,23 +62,29 @@ class ImageAnnotator:
     if len(detections.xyxy) == 0:
       return {"file": image_path, "detections": 0, "message": "No objects detected"}
 
-    # Process Segmentation Masks via SAM
-    # Re-convert to RGB for SAM as it uses PIL-style internally
+    # --- COORDINATE FIX ---
+    # Check if boxes are normalized (0-1) and scale them to pixel values
+    # Some versions of GroundingDINO return [0,1] instead of [0,W]
+    if np.max(detections.xyxy) <= 1.01:
+        print("[DEBUG] Normalizing coordinates detected. Scaling to pixels...")
+        detections.xyxy[:, [0, 2]] *= w_orig
+        detections.xyxy[:, [1, 3]] *= h_orig
+
+    # Ensure boxes are within image boundaries
+    detections.xyxy[:, [0, 2]] = np.clip(detections.xyxy[:, [0, 2]], 0, w_orig)
+    detections.xyxy[:, [1, 3]] = np.clip(detections.xyxy[:, [1, 3]], 0, h_orig)
+
+    # Process Segmentation Masks
     image_rgb = cv2.cvtColor(image_source, cv2.COLOR_BGR2RGB)
     sam_results = self.sam_model(image_rgb, bboxes=detections.xyxy, verbose=False)
     
     masks = None
     if sam_results[0].masks is not None:
         mask_data = sam_results[0].masks.data 
-        # Fix 2: Correct mask resizing to prevent bleeding
         resized_masks = []
         for mask in mask_data:
             mask_np = mask.cpu().numpy().astype(np.float32)
-            resized = cv2.resize(
-                mask_np, 
-                (w_orig, h_orig), 
-                interpolation=cv2.INTER_LINEAR
-            )
+            resized = cv2.resize(mask_np, (w_orig, h_orig), interpolation=cv2.INTER_LINEAR)
             resized_masks.append(resized > 0.5)
         masks = np.array(resized_masks)
 
@@ -98,13 +98,12 @@ class ImageAnnotator:
     out_path = Path(output_dir)
     out_path.mkdir(exist_ok=True, parents=True)
 
-    # Fix 4: Save classes file so user knows label indices
     classes_file = out_path / "classes.txt"
     with open(classes_file, "w") as f:
         f.write("\n".join(self.labels))
+        
     preview_path = out_path / "previews" / f"{image_name}_annotated.jpg"
     preview_path.parent.mkdir(exist_ok=True, parents=True)
-    # Save as BGR for imwrite
     cv2.imwrite(str(preview_path), cv2.cvtColor(annotated, cv2.COLOR_RGB2BGR))
 
     # Export Logic
@@ -128,74 +127,45 @@ class ImageAnnotator:
   ):
     annotated = image.copy()
     
-    # Fix 3: Color palette - different color per class
     COLORS = [
-        (255, 56, 56),   # Red
-        (56, 56, 255),   # Blue  
-        (56, 255, 56),   # Green
-        (255, 157, 56),  # Orange
-        (157, 56, 255),  # Purple
-        (56, 255, 157),  # Teal
-        (255, 56, 157),  # Pink
-        (255, 255, 56),  # Yellow
+        (255, 56, 56), (56, 56, 255), (56, 255, 56), (255, 157, 56),
+        (157, 56, 255), (56, 255, 157), (255, 56, 157), (255, 255, 56),
     ]
     
     try:
-        # Draw segmentation masks first (underneath boxes)
         if masks is not None:
             for i, mask in enumerate(masks):
-                # Safe indexing for category color
                 cid = int(class_ids[i]) if class_ids[i] is not None else 0
                 color = COLORS[cid % len(COLORS)]
                 bool_mask = mask.astype(bool)
                 
-                # Only color the masked region, not whole image
-                colored = np.zeros_like(annotated)
-                colored[bool_mask] = color
-                
-                # Blend only where mask is true
-                annotated = np.where(
-                    bool_mask[:, :, np.newaxis],
-                    cv2.addWeighted(annotated, 0.6, colored, 0.4, 0),
-                    annotated
-                )
+                # Optimized mask blending
+                mask_overlay = np.zeros_like(annotated)
+                mask_overlay[bool_mask] = color
+                annotated = cv2.addWeighted(annotated, 1.0, mask_overlay, 0.4, 0)
 
-        # Draw bounding boxes and labels
         for i, box in enumerate(boxes):
             x1, y1, x2, y2 = map(int, box)
             cid = int(class_ids[i]) if class_ids[i] is not None else 0
             color = COLORS[cid % len(COLORS)]
             label = f"{phrases[i]} {confidences[i]:.2f}"
             
-            # Draw box
-            cv2.rectangle(
-                annotated, (x1, y1), (x2, y2), 
-                color, 2
-            )
+            # --- BOX DRAWING FIX ---
+            # Ensure we don't draw tiny or invalid boxes
+            if (x2 - x1) < 2 or (y2 - y1) < 2: continue
             
-            # Draw label background
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 3) # Thicker box
+            
             font = cv2.FONT_HERSHEY_SIMPLEX
-            font_scale = 0.55
-            thickness = 1
-            (tw, th), baseline = cv2.getTextSize(
-                label, font, font_scale, thickness
-            )
-            label_y = max(y1 - 5, th + 5)
-            cv2.rectangle(
-                annotated,
-                (x1, label_y - th - baseline - 4),
-                (x1 + tw + 4, label_y),
-                color, -1
-            )
+            font_scale = 0.6
+            thickness = 2
+            (tw, th), baseline = cv2.getTextSize(label, font, font_scale, thickness)
             
-            # Draw label text in white
-            cv2.putText(
-                annotated, label,
-                (x1 + 2, label_y - baseline - 2),
-                font, font_scale,
-                (255, 255, 255), thickness,
-                cv2.LINE_AA
-            )
+            # Position label background
+            # Fix: Ensure label stays inside image top border
+            bg_y = max(y1, th + 10)
+            cv2.rectangle(annotated, (x1, bg_y - th - 10), (x1 + tw + 10, bg_y), color, -1)
+            cv2.putText(annotated, label, (x1 + 5, bg_y - 5), font, font_scale, (255, 255, 255), thickness)
 
     except Exception as e:
         print(f"Draw error: {e}")
@@ -244,7 +214,8 @@ class VideoAnnotator:
     frames_dir = Path(output_dir) / "frames" / video_name
     frames_dir.mkdir(parents=True, exist_ok=True)
     
-    frame_interval, saved = max(1, int(fps)), []
+    frame_interval = max(1, int(fps // 2)) # Save 2 frames per second for speed
+    saved = []
     curr = 0
     while True:
       ret, frame = cap.read()
