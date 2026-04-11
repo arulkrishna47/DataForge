@@ -169,8 +169,10 @@ const testEmailSystem = async (req, res) => {
           budget: 'N/A'
       }, { email: 'System Debugger', name: 'Test User' });
 
+      res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
       res.json({ 
           message: 'Test email successfully handed off to Gmail!',
+          timestamp: new Date().toISOString(),
           recipient: adminEmail,
           accepted: info?.accepted,
           rejected: info?.rejected,
