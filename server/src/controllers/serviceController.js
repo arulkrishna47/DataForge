@@ -44,18 +44,21 @@ const createServiceRequest = async (req, res) => {
       },
     });
 
-    // Send email notification to admin (Non-blocking)
+    // Send email notification to admin (Awaited for Serverless compatibility)
     const adminEmailToNotify = process.env.ADMIN_EMAIL || 'cortexa.services@gmail.com';
-    sendNewServiceRequestAdminEmail(adminEmailToNotify, serviceRequest, currentUser || { email: 'Guest User' })
-        .then(() => console.log('✅ Admin notification sent'))
-        .catch(err => console.error('❌ SMTP Error:', err.message));
+    try {
+      await sendNewServiceRequestAdminEmail(adminEmailToNotify, serviceRequest, currentUser || { email: 'Guest User' });
+      console.log('✅ Admin notification sent');
+    } catch (err) {
+      console.error('❌ SMTP Error:', err.message);
+    }
 
     return res.status(201).json(serviceRequest);
   } catch (err) {
     console.error('🚀 [CRITICAL] Service Request Failed:', err.message);
     return res.status(500).json({ 
         message: 'Request failed to save. Please try again.',
-        debug: err.message // Now you will see the REAL error in your browser
+        debug: err.message
     });
   }
 };
@@ -134,10 +137,11 @@ const handleQuickAction = async (req, res) => {
         <h1 style="color: #C17BFF; font-size: 40px; margin-bottom: 20px;">CORTEXA ACTION</h1>
         <p style="font-size: 20px; color: #94A3B8;">Request has been successfully <strong>${status}</strong>.</p>
         <p style="margin-top: 20px; color: #64748B;">Client has been notified via email.</p>
-        <a href="${process.env.VITE_URL || 'http://localhost:5173'}/admin" style="background-color: #C17BFF; color: white; padding: 12px 30px; text-decoration: none; border-radius: 12px; margin-top: 30px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px;">Return to Admin Dashboard</a>
+        <a href="${process.env.VITE_URL || 'http://localhost:5174'}/admin" style="background-color: #C17BFF; color: white; padding: 12px 30px; text-decoration: none; border-radius: 12px; margin-top: 30px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px;">Return to Admin Dashboard</a>
       </div>
     `);
   } catch (err) {
+    console.error('Quick Action Error:', err.message);
     res.status(400).send('Error processing request action.');
   }
 };
