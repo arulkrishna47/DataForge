@@ -5,7 +5,17 @@ import api from '../api/axios'
 import { motion, AnimatePresence } from 'framer-motion'
 import { UploadCloud, X, LayoutTemplate, Layers, CheckCircle, Tag, FileText, Download } from 'lucide-react'
 
-const PREDEFINED_LABELS = ['person', 'car', 'dog', 'cat', 'bicycle', 'truck', 'chair', 'bottle', 'phone', 'laptop']
+const PREDEFINED_LABELS = [
+  'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat', 'traffic light',
+  'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow',
+  'elephant', 'bear', 'zebra', 'giraffe', 'backpack', 'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee',
+  'skis', 'snowboard', 'sports ball', 'kite', 'baseball bat', 'baseball glove', 'skateboard', 'surfboard',
+  'tennis racket', 'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple',
+  'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair', 'couch',
+  'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse', 'remote', 'keyboard', 'cell phone',
+  'microwave', 'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear',
+  'hair drier', 'toothbrush'
+]
 
 export default function AutoAnnotate() {
   const [files, setFiles] = useState([])
@@ -13,6 +23,8 @@ export default function AutoAnnotate() {
   const [labelInput, setLabelInput] = useState('')
   const [exportFormat, setExportFormat] = useState('yolo')
   const [thresholds, setThresholds] = useState({ box: 0.35, text: 0.25 })
+  const [showDropdown, setShowDropdown] = useState(false)
+  const [highlightedIndex, setHighlightedIndex] = useState(-1)
   const [jobId, setJobId] = useState(null)
   const [jobStatus, setJobStatus] = useState('idle')
   const [progress, setProgress] = useState(0)
@@ -53,9 +65,27 @@ export default function AutoAnnotate() {
   const handleLabelKeyDown = (e) => {
     if (e.key === 'Enter' || e.key === ',') {
       e.preventDefault()
-      addLabel(labelInput)
+      if (highlightedIndex >= 0 && filteredSuggestions[highlightedIndex]) {
+        addLabel(filteredSuggestions[highlightedIndex])
+      } else {
+        addLabel(labelInput)
+      }
+      setShowDropdown(false)
+      setHighlightedIndex(-1)
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setHighlightedIndex(prev => Math.min(prev + 1, filteredSuggestions.length - 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setHighlightedIndex(prev => Math.max(prev - 1, 0))
+    } else if (e.key === 'Escape') {
+      setShowDropdown(false)
     }
   }
+
+  const filteredSuggestions = PREDEFINED_LABELS.filter(
+    l => l.includes(labelInput.toLowerCase()) && !labels.includes(l)
+  ).slice(0, 8)
 
   const startAnnotation = async () => {
     if (!files.length || !labels.length) {
@@ -193,15 +223,57 @@ export default function AutoAnnotate() {
           2. What should be detected?
         </h2>
         
-        <div className="space-y-4">
-          <input
-            type="text"
-            className="w-full bg-[#0D0B1A] border border-[#2A2740] text-white rounded-xl px-4 py-3 focus:outline-none focus:border-[#C17BFF] focus:ring-1 focus:ring-[#C17BFF] transition-all"
-            placeholder="Type a label (e.g. car, person, traffic light) and press Enter..."
-            value={labelInput}
-            onChange={(e) => setLabelInput(e.target.value)}
-            onKeyDown={handleLabelKeyDown}
-          />
+        <div className="space-y-4 relative">
+          <div className="relative">
+            <input
+              type="text"
+              className="w-full bg-[#0D0B1A] border border-[#2A2740] text-white rounded-xl px-4 py-3 focus:outline-none focus:border-[#C17BFF] focus:ring-1 focus:ring-[#C17BFF] transition-all"
+              placeholder="Type a label (e.g. car, person, traffic light) and press Enter..."
+              value={labelInput}
+              onChange={(e) => {
+                setLabelInput(e.target.value)
+                setShowDropdown(true)
+                setHighlightedIndex(-1)
+              }}
+              onFocus={() => setShowDropdown(true)}
+              onBlur={() => setTimeout(() => setShowDropdown(false), 200)}
+              onKeyDown={handleLabelKeyDown}
+            />
+
+            {/* Smart Dropdown */}
+            <AnimatePresence>
+              {showDropdown && labelInput && filteredSuggestions.length > 0 && (
+                <motion.ul
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 5 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="absolute z-50 w-full bg-[#1A1733] border border-[#C17BFF]/30 rounded-xl mt-1 shadow-2xl max-h-60 overflow-y-auto"
+                >
+                  {filteredSuggestions.map((suggestion, index) => (
+                    <li
+                      key={suggestion}
+                      onClick={() => {
+                        addLabel(suggestion)
+                        setShowDropdown(false)
+                      }}
+                      onMouseEnter={() => setHighlightedIndex(index)}
+                      className={`px-4 py-3 cursor-pointer flex items-center justify-between group transition-colors ${
+                        highlightedIndex === index ? 'bg-[#C17BFF] text-white' : 'text-slate-300 hover:bg-[#2A2740]'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <CheckCircle className={`w-4 h-4 ${highlightedIndex === index ? 'text-white' : 'text-[#C17BFF]'}`} />
+                        <span className="font-medium">{suggestion}</span>
+                      </div>
+                      <span className={`text-[10px] uppercase tracking-widest ${highlightedIndex === index ? 'text-white/70' : 'text-slate-500'}`}>
+                        Pretrained High-Accuracy
+                      </span>
+                    </li>
+                  ))}
+                </motion.ul>
+              )}
+            </AnimatePresence>
+          </div>
           
           <div className="flex flex-wrap gap-2">
             <AnimatePresence>
