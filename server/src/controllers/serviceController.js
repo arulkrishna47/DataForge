@@ -141,103 +141,13 @@ const handleQuickAction = async (req, res) => {
       </div>
     `);
   } catch (err) {
-    console.error('Quick Action Error:', err.message);
-    res.status(400).send('Error processing request action.');
+    res.status(500).send('Error processing action: ' + err.message);
   }
-};
-
-// @desc Test email system
-const testEmailSystem = async (req, res) => {
-  const adminEmail = process.env.ADMIN_EMAIL || 'cortexa.services@gmail.com';
-  console.log('--- EMAIL DEBUG INITIATED ---');
-  console.log('Sending to:', adminEmail);
-  console.log('SMTP Config Status:', req.debugConfig);
-
-  if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
-      return res.status(500).json({ 
-          error: 'SMTP credentials missing from environment variables!',
-          config: req.debugConfig
-      });
-  }
-
-  try {
-    const info = await sendNewServiceRequestAdminEmail(adminEmail, {
-          id: 'TEST-ID',
-          serviceType: 'System Test',
-          scope: 'Testing production connectivity',
-          timeline: 'Now',
-          budget: 'N/A'
-      }, { email: 'System Debugger', name: 'Test User' });
-
-      res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
-      res.json({ 
-          message: 'Test email successfully handed off to Gmail!',
-          timestamp: new Date().toISOString(),
-          recipient: adminEmail,
-          accepted: info?.accepted,
-          rejected: info?.rejected,
-          messageId: info?.messageId,
-          server_config: req.debugConfig 
-      });
-  } catch (err) {
-      console.error('SMTP TEST FAILED:', err.message);
-      res.status(500).json({ 
-          message: 'SMTP Test Failed', 
-          error: err.message,
-          config: req.debugConfig
-      });
-  }
-};
-
-const scanNetwork = async (req, res) => {
-    const net = require('net');
-    const targets = [
-        { host: 'smtp.gmail.com', port: 587 },
-        { host: 'smtp.gmail.com', port: 465 },
-        { host: 'smtp.mailtrap.io', port: 2525 },
-        { host: 'smtp.sendgrid.net', port: 2525 },
-        { host: 'google.com', port: 443 },
-        { host: 'google.com', port: 80 }
-    ];
-
-    const results = await Promise.all(targets.map(target => {
-        return new Promise((resolve) => {
-            const socket = new net.Socket();
-            const start = Date.now();
-            socket.setTimeout(5000);
-
-            socket.on('connect', () => {
-                const duration = Date.now() - start;
-                socket.destroy();
-                resolve({ ...target, status: 'OPEN', duration: `${duration}ms` });
-            });
-
-            socket.on('timeout', () => {
-                socket.destroy();
-                resolve({ ...target, status: 'TIMEOUT' });
-            });
-
-            socket.on('error', (err) => {
-                socket.destroy();
-                resolve({ ...target, status: 'ERROR', message: err.message });
-            });
-
-            socket.connect(target.port, target.host);
-        });
-    }));
-
-    res.json({
-        message: "Render Outbound Network Scan",
-        timestamp: new Date().toISOString(),
-        results
-    });
 };
 
 module.exports = {
   createServiceRequest,
   getServiceRequests,
   updateServiceRequestStatus,
-  handleQuickAction,
-  testEmailSystem,
-  scanNetwork
+  handleQuickAction
 };
