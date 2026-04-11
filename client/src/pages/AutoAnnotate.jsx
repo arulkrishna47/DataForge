@@ -12,6 +12,7 @@ export default function AutoAnnotate() {
   const [labels, setLabels] = useState([])
   const [labelInput, setLabelInput] = useState('')
   const [exportFormat, setExportFormat] = useState('yolo')
+  const [thresholds, setThresholds] = useState({ box: 0.35, text: 0.25 })
   const [jobId, setJobId] = useState(null)
   const [jobStatus, setJobStatus] = useState('idle')
   const [progress, setProgress] = useState(0)
@@ -70,19 +71,25 @@ export default function AutoAnnotate() {
       files.forEach(f => formData.append('files', f))
       formData.append('labels', labels.join(','))
       formData.append('export_format', exportFormat)
+      formData.append('box_threshold', thresholds.box)
+      formData.append('text_threshold', thresholds.text)
 
       const { data } = await api.post(
         '/annotate/start', formData,
-        { headers: { 'Content-Type': 'multipart/form-data' } }
+        { 
+          headers: { 'Content-Type': 'multipart/form-data' },
+          timeout: 0 // Disable browser-side timeout for large uploads
+        }
       )
 
       setJobId(data.job_id)
       setJobStatus('processing')
-      toast.success('Annotation job started!')
+      toast.success('Annotation job started in background!')
       startPolling(data.job_id)
     } catch (err) {
+      console.error('Annotation error:', err)
       setJobStatus('failed')
-      toast.error('Failed to start annotation')
+      toast.error(err.response?.data?.error || 'Failed to start annotation. Video may be too large for Vercel.')
     }
   }
 
@@ -232,11 +239,49 @@ export default function AutoAnnotate() {
         </div>
       </section>
 
-      {/* SECTION 3 — Export Format */}
+      {/* SECTION 3 — AI Intelligence */}
+      <section className="bg-[#131127] border border-[#2A2740] rounded-2xl p-8 shadow-xl">
+        <h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
+          <Layers className="w-5 h-5 text-[#C17BFF]" />
+          3. AI Intelligence Settings
+        </h2>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+          <div className="space-y-4">
+            <div className="flex justify-between items-center">
+              <label className="text-sm font-medium text-slate-300">Object Detection Sensitivity (Box)</label>
+              <span className="text-[#C17BFF] font-bold">{thresholds.box}</span>
+            </div>
+            <input 
+              type="range" min="0.01" max="0.99" step="0.01" 
+              value={thresholds.box}
+              onChange={(e) => setThresholds({...thresholds, box: parseFloat(e.target.value)})}
+              className="w-full accent-[#C17BFF]"
+            />
+            <p className="text-xs text-slate-500">Lower = Detect more objects (might be noisy). Higher = Be more strict.</p>
+          </div>
+
+          <div className="space-y-4">
+            <div className="flex justify-between items-center">
+              <label className="text-sm font-medium text-slate-300">Label Matching Strictness (Text)</label>
+              <span className="text-[#C17BFF] font-bold">{thresholds.text}</span>
+            </div>
+            <input 
+              type="range" min="0.01" max="0.99" step="0.01" 
+              value={thresholds.text}
+              onChange={(e) => setThresholds({...thresholds, text: parseFloat(e.target.value)})}
+              className="w-full accent-[#C17BFF]"
+            />
+            <p className="text-xs text-slate-500">How strictly the AI matches your words to the objects it sees.</p>
+          </div>
+        </div>
+      </section>
+
+      {/* SECTION 4 — Export Format */}
       <section className="bg-[#131127] border border-[#2A2740] rounded-2xl p-8 shadow-xl">
         <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
           <LayoutTemplate className="w-5 h-5 text-[#F0A030]" />
-          3. Export Format
+          4. Export Format
         </h2>
         
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -328,7 +373,7 @@ export default function AutoAnnotate() {
                 <div key={i} className="bg-[#0D0B1A] rounded-xl border border-[#2A2740] overflow-hidden">
                   <div className="aspect-video bg-[#1A1733] relative">
                     {res.preview && (
-                       <img src={`${(import.meta.env.VITE_API_BASE_URL || '').replace('/api','')}/${res.preview}`} className="w-full h-full object-cover" alt="Preview"/>
+                       <img src={`${import.meta.env.VITE_API_BASE_URL}/annotate/preview/${jobId}/${res.preview.split('/').pop()}`} className="w-full h-full object-cover" alt="Preview"/>
                     )}
                   </div>
                   <div className="p-3">

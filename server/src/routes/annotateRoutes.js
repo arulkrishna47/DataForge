@@ -39,6 +39,8 @@ router.post(
       });
       formData.append('labels', labels);
       formData.append('export_format', export_format || 'yolo');
+      formData.append('box_threshold', req.body.box_threshold || 0.35);
+      formData.append('text_threshold', req.body.text_threshold || 0.25);
 
       // 2. Call AI Brain
       const response = await axios.post(
@@ -122,6 +124,23 @@ router.get(
     } catch (err) {
       console.error("[DEBUG] Download Failed for Job:", req.params.jobId);
       return res.status(500).json({ error: 'Download failed' });
+    }
+  }
+);
+
+// GET /api/annotate/preview/:jobId/:filename
+router.get(
+  '/preview/:jobId/:filename',
+  async (req, res) => {
+    try {
+      const { jobId, filename } = req.params;
+      const response = await axios.get(
+        `${AI_SERVICE_URL}/annotate/preview/${jobId}/${filename}`,
+        { responseType: 'stream' }
+      );
+      response.data.pipe(res);
+    } catch (err) {
+      res.status(404).send('Preview not found');
     }
   }
 );
