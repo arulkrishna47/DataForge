@@ -18,7 +18,7 @@ socket_app = socketio.ASGIApp(sio, app)
 
 app.add_middleware(
   CORSMiddleware,
-  allow_origins=["*"], # Allow all for production safety
+  allow_origins=["*"],
   allow_credentials=True,
   allow_methods=["*"],
   allow_headers=["*"],
@@ -28,6 +28,13 @@ UPLOAD_DIR = Path("uploads")
 OUTPUT_DIR = Path("outputs")
 UPLOAD_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
+
+# --- GLOBAL MODEL INSTANCE (Preventing OOM Crashes) ---
+# We initialize with generic labels; thresholds are passed per-request now.
+print("[SYSTEM] Pre-loading AI Brain into VRAM...")
+GLOBAL_ENGINE = ImageAnnotator(labels=["person", "object"], box_threshold=0.35, text_threshold=0.25)
+VIDEO_ENGINE = VideoAnnotator(GLOBAL_ENGINE)
+print("[SYSTEM] AI Brain Loaded & Shared.")
 
 # Global Job Storage
 jobs = {}
@@ -68,7 +75,6 @@ async def start_annotation(
     "error": None
   }
 
-  # --- ASYNC START ---
   background_tasks.add_task(
     run_annotation_job,
     job_id, saved_files, label_list, export_format, box_threshold, text_threshold
@@ -98,29 +104,29 @@ async def run_annotation_job(job_id, file_paths, labels, export_format, box_th, 
   try:
     jobs[job_id]["status"] = "processing"
     
-    # Initialize Annotators ONCE
-    image_engine = ImageAnnotator(labels, box_threshold=box_th, text_threshold=text_th)
-    video_engine = VideoAnnotator(image_engine)
+    # Update global engine parameters for THIS specific job
+    GLOBAL_ENGINE.labels = labels
+    GLOBAL_ENGINE.box_threshold = box_th
+    GLOBAL_ENGINE.text_threshold = text_th
     
     output_dir = OUTPUT_DIR / job_id
     output_dir.mkdir(exist_ok=True)
     
     video_extensions = {'.mp4', '.avi', '.mov', '.mkv', '.webm'}
-    all_results = []
     
     for i, fp in enumerate(file_paths):
       ext = Path(fp).suffix.lower()
-      msg = f"Processing {Path(fp).name} ({i+1}/{len(file_paths)})"
+      msg = f"Analyzing {Path(fp).name} ({i+1}/{len(file_paths)})"
       
       await sio.emit("job_progress", {"job_id": job_id, "progress": jobs[job_id]["progress"], "message": msg})
       
       if ext in video_extensions:
-        res = video_engine.annotate_video(fp, str(output_dir), export_format)
-        all_results.append(res)
+        res = VIDEO_ENGINE.annotate_video(fp, str(output_dir), export_format)
       else:
-        res = image_engine.annotate_image(fp, str(output_dir), export_format)
-        all_results.append(res)
+        res = GLOBAL_ENGINE.annotate_image(fp, str(output_dir), export_format)
         
+      if "error" in res: raise Exception(res["error"])
+
       jobs[job_id]["progress"] = int(((i+1)/len(file_paths))*95)
       jobs[job_id]["results"].append(res)
 
@@ -135,7 +141,7 @@ async def run_annotation_job(job_id, file_paths, labels, export_format, box_th, 
     await sio.emit("job_progress", {"job_id": job_id, "status": "completed", "progress": 100})
 
   except Exception as e:
-    print(f"CRITICAL AI ERROR: {e}")
+    print(f"[CRITICAL ERROR] Job {job_id} failed: {e}")
     jobs[job_id].update({"status": "failed", "error": str(e)})
     await sio.emit("job_progress", {"job_id": job_id, "status": "failed", "error": str(e)})
   finally:
