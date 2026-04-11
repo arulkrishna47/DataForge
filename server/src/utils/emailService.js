@@ -2,13 +2,13 @@ const nodemailer = require('nodemailer');
 
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || 'smtp.gmail.com',
-  port: 465, // Use 465 for Production (often bypasses blocks that hit 587)
-  secure: true, // MUST be true for port 465
+  port: 587, // Port 587 is more compatible with cloud firewalls
+  secure: false, // Must be false for port 587 (uses STARTTLS)
   auth: {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
   },
-  connectionTimeout: 10000, // 10 seconds
+  connectionTimeout: 10000,
   greetingTimeout: 10000,
 });
 
