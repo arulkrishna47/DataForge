@@ -146,9 +146,48 @@ const handleQuickAction = async (req, res) => {
   }
 };
 
+// @desc Test email system
+const testEmailSystem = async (req, res) => {
+  const adminEmail = process.env.ADMIN_EMAIL || 'cortexa.services@gmail.com';
+  console.log('--- EMAIL DEBUG INITIATED ---');
+  console.log('Sending to:', adminEmail);
+  console.log('SMTP Config Status:', req.debugConfig);
+
+  if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
+      return res.status(500).json({ 
+          error: 'SMTP credentials missing from environment variables!',
+          config: req.debugConfig
+      });
+  }
+
+  try {
+      await sendNewServiceRequestAdminEmail(adminEmail, {
+          id: 'TEST-ID',
+          serviceType: 'System Test',
+          scope: 'Testing production connectivity',
+          timeline: 'Now',
+          budget: 'N/A'
+      }, { email: 'System Debugger', name: 'Test User' });
+
+      res.json({ 
+          message: 'Test email successfully handed off to Gmail!',
+          recipient: adminEmail,
+          server_config: req.debugConfig 
+      });
+  } catch (err) {
+      console.error('SMTP TEST FAILED:', err.message);
+      res.status(500).json({ 
+          message: 'SMTP Test Failed', 
+          error: err.message,
+          config: req.debugConfig
+      });
+  }
+};
+
 module.exports = {
   createServiceRequest,
   getServiceRequests,
   updateServiceRequestStatus,
   handleQuickAction,
+  testEmailSystem,
 };
