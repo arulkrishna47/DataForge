@@ -2,6 +2,7 @@ const { createClient } = require('@supabase/supabase-js');
 const prisma = require('../db');
 
 // Supabase admin client (uses service role key to validate user tokens)
+const jwt = require('jsonwebtoken');
 const supabase = createClient(
   process.env.SUPABASE_URL || '',
   process.env.SUPABASE_SERVICE_ROLE_KEY || ''
@@ -10,6 +11,7 @@ const supabase = createClient(
 const protect = async (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const bearerToken = authHeader && authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : null;
+  const cookieToken = req.cookies?.token;
 
   // --- PRIMARY PATH: Supabase Bearer Token ---
   if (bearerToken) {
@@ -70,7 +72,29 @@ const protect = async (req, res, next) => {
     }
   }
 
-  // No token provided
+  // --- SECONDARY PATH: Custom JWT Cookie ---
+  if (cookieToken) {
+    try {
+      const decoded = jwt.verify(cookieToken, process.env.JWT_SECRET);
+      const localUser = await prisma.user.findUnique({ where: { id: decoded.userId } });
+
+      if (localUser) {
+        req.user = {
+          id: localUser.id,
+          email: localUser.email,
+          role: localUser.role,
+          name: localUser.name || `${localUser.firstName || ''} ${localUser.lastName || ''}`.trim() || localUser.email.split('@')[0],
+        };
+        console.log(`[Auth] Authenticated via Cookie: ${req.user.email}`);
+        return next();
+      }
+    } catch (err) {
+      console.warn('[Auth] Cookie token invalid:', err.message);
+      // Fall through to 401
+    }
+  }
+
+  // No valid token provided
   return res.status(401).json({ message: 'No authentication token provided. Please login.' });
 };
 

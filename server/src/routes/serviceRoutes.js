@@ -13,7 +13,7 @@ const router = express.Router();
 router.get('/action/:id/:action', handleQuickAction);
 
 router.route('/')
-  .post(createServiceRequest)
+  .post(protect, createServiceRequest)
   .get(protect, getServiceRequests);
 
 router.put('/:id', protect, authorize('ADMIN'), updateServiceRequestStatus);

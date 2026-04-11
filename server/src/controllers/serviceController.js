@@ -8,7 +8,7 @@ const createServiceRequest = async (req, res) => {
   console.log('🚀 [HEARTBEAT] New service request incoming!');
   const { serviceType, scope, timeline, budget } = req.body;
   
-  console.log('User attempting to create service request:', req.user.email);
+  console.log('User attempting to create service request:', req.user?.email || req.body.email || 'Guest');
   console.log('Payload:', { serviceType, scope, timeline, budget });
 
   try {

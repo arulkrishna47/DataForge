@@ -99,8 +99,12 @@ const sendNewServiceRequestAdminEmail = async (adminEmail, request, clientInfo) 
       </div>
       
       <div style="margin-top: 40px; border-top: 1px solid #1E293B; padding-top: 20px;">
-        <p style="font-size: 14px; color: #94a3b8; margin-bottom: 20px;">Action Required:</p>
-        <p style="color: #ffffff; font-size: 14px;">Log in to the <strong>Admin Dashboard</strong> to Accept or Decline this request.</p>
+        <p style="font-size: 14px; color: #94a3b8; margin-bottom: 20px;">Quick Actions:</p>
+        <div style="margin: 20px 0;">
+          <a href="${baseUrl}/services/action/${request.id}/accept" style="display: inline-block; background-color: #22C55E; color: white; padding: 12px 25px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 14px; margin-right: 10px;">Accept Request</a>
+          <a href="${baseUrl}/services/action/${request.id}/decline" style="display: inline-block; background-color: #EF4444; color: white; padding: 12px 25px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 14px;">Decline Request</a>
+        </div>
+        <p style="color: #94a3b8; font-size: 12px; margin-top: 20px;">Or log in to the <strong>Admin Dashboard</strong> for full management.</p>
       </div>
 
       <p style="margin-top: 30px;"><a href="${process.env.VITE_URL || 'http://localhost:5174'}/admin" style="color: #C17BFF; text-decoration: underline; font-size: 13px;">Open Admin Dashboard</a></p>
