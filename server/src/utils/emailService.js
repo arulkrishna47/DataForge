@@ -43,12 +43,14 @@ const sendDeliverableUploadedEmail = async (user, project, deliverable) => {
 const sendEmail = async (to, subject, html) => {
   try {
     const info = await transporter.sendMail({
-      from: process.env.SMTP_USER, // Simplified to avoid Gmail phishing filters
+      from: `"Cortexa Platform" <${process.env.SMTP_USER}>`,
       to,
+      replyTo: process.env.SMTP_USER,
       subject,
       html,
     });
-    console.log(`Email Service: Sent [${subject}] to [${to}]. Id: ${info.messageId}`);
+    console.log(`Email Service: Sent [${subject}] to [${to}]. Id: ${info.messageId}. Accepted: ${info.accepted}. Rejected: ${info.rejected}`);
+    return info; // Return info for debugging
   } catch (err) {
     console.error(`Email Service Error: [${subject}] to [${to}] failed.`, err.message);
   }

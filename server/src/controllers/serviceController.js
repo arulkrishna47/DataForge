@@ -161,7 +161,7 @@ const testEmailSystem = async (req, res) => {
   }
 
   try {
-      await sendNewServiceRequestAdminEmail(adminEmail, {
+    const info = await sendNewServiceRequestAdminEmail(adminEmail, {
           id: 'TEST-ID',
           serviceType: 'System Test',
           scope: 'Testing production connectivity',
@@ -172,6 +172,9 @@ const testEmailSystem = async (req, res) => {
       res.json({ 
           message: 'Test email successfully handed off to Gmail!',
           recipient: adminEmail,
+          accepted: info?.accepted,
+          rejected: info?.rejected,
+          messageId: info?.messageId,
           server_config: req.debugConfig 
       });
   } catch (err) {
