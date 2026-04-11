@@ -31,6 +31,7 @@ const registerUser = async (req, res) => {
     data: {
       firstName,
       lastName,
+      name: `${firstName} ${lastName}`.trim(),
       email,
       password: hashedPassword,
       role: userRole,
