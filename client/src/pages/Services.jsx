@@ -15,7 +15,8 @@ const Services = () => {
   const handleTryNow = () => {
     const destination = '/dashboard/auto-annotate';
     if (!user) {
-      navigate(`/login?redirect=${encodeURIComponent(destination)}`);
+      // Pass the destination via Router state instead of URL params for maximum reliability
+      navigate('/login', { state: { from: destination } });
     } else {
       navigate(destination);
     }

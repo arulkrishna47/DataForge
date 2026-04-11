@@ -18,11 +18,12 @@ const AuthCallback = () => {
       }
 
       const role = session.user?.user_metadata?.role || 'client';
-      const oauthRedirect = sessionStorage.getItem('oauth_redirect');
 
-      if (oauthRedirect) {
-        sessionStorage.removeItem('oauth_redirect');
-        navigate(oauthRedirect);
+      // Smart Redirect Handover: Prioritize the intentional destination (e.g. Auto-Annotation)
+      const savedRedirect = sessionStorage.getItem('redirectAfterLogin');
+      if (savedRedirect) {
+        sessionStorage.removeItem('redirectAfterLogin');
+        navigate(savedRedirect);
         return;
       }
 

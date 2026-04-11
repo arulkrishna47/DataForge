@@ -15,12 +15,23 @@ const ProtectedRoute = ({ allowedRoles = [] }) => {
 
   if (!user) return <Navigate to="/login" replace />;
 
-  // We hardcode the designated admin email check to avoid environmental issues in this troubleshooting phase
+  // Define roles more robustly from metadata
+  const userMetadata = user?.user_metadata || {};
+  const appMetadata = user?.app_metadata || {};
+  
   const designatedAdminEmail = 'cortexa.services@gmail.com';
   const isAdminEmail = (user.email?.toLowerCase() === designatedAdminEmail.toLowerCase());
-  const userRole = (isAdminEmail ? 'admin' : (user.user_metadata?.role || user.app_metadata?.role || 'client').toLowerCase());
   
-  if (allowedRoles.length > 0 && !allowedRoles.map(r => r.toLowerCase()).includes(userRole)) {
+  // Check role in multiple possible locations
+  const userRole = (
+    isAdminEmail ? 'admin' : 
+    (userMetadata.role || appMetadata.role || userMetadata.user_role || 'client')
+  ).toLowerCase();
+  
+  const isAllowed = allowedRoles.length === 0 || allowedRoles.some(role => role.toLowerCase() === userRole);
+
+  if (!isAllowed) {
+    console.warn(`Access denied for role: ${userRole}. Redirecting to Home.`);
     return <Navigate to="/" replace />;
   }
 

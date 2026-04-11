@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../utils/supabaseClient';
 import { toast } from 'sonner';
@@ -30,15 +30,15 @@ const Login = () => {
   const [oauthLoading, setOauthLoading] = useState('');
   const [error, setError] = useState('');
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const redirectPath = searchParams.get('redirect');
+  const location = useLocation();
+  const from = location.state?.from || sessionStorage.getItem('redirectAfterLogin');
 
-  // If redirect exists, store it for OAuth callback as well
+  // If we have a destination, persist it even through social login handshakes
   useEffect(() => {
-    if (redirectPath) {
-      sessionStorage.setItem('oauth_redirect', redirectPath);
+    if (location.state?.from) {
+      sessionStorage.setItem('redirectAfterLogin', location.state.from);
     }
-  }, [redirectPath]);
+  }, [location.state]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -49,9 +49,11 @@ const Login = () => {
         const data = await login(email, password);
         toast.success('Welcome back to Cortexa!');
         
-        // Use smart redirect from URL params
-        if (redirectPath) {
-          navigate(redirectPath);
+        // Smart Redirect Logic
+        const savedRedirect = sessionStorage.getItem('redirectAfterLogin');
+        if (savedRedirect) {
+          sessionStorage.removeItem('redirectAfterLogin');
+          navigate(savedRedirect);
           return;
         }
 
