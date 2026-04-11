@@ -1,76 +1,82 @@
 import { motion } from 'framer-motion';
-import { Target, Zap, Shield, Users, CheckCircle } from 'lucide-react';
+import { Target, Zap, Shield, Users, CheckCircle, Database, Brain, Lock } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 const Services = () => {
-  const tiers = [
+  const capabilities = [
     {
-      name: 'Basic',
-      price: '$2,500',
-      desc: 'Ideal for small research teams and startups testing feasibility.',
-      features: ['Up to 1M data points', 'Standard NLP/CV labeling', '1-week turnaround', 'Email support']
+      title: 'High-Density Annotation',
+      icon: <Database className="w-8 h-8" />,
+      desc: 'Specialized labeling for complex surgical datasets, medical imaging, and high-velocity NLP requirements.',
+      features: ['99.9% Label Accuracy', 'Multi-layer Segmentation', 'Temporal Tracking']
     },
     {
-      name: 'Pro',
-      price: '$12,000',
-      desc: 'For scaling projects that require high-density, multi-layer annotation.',
-      features: ['Unlimited scraping', 'Custom model fine-tuning', 'Priority status', 'Dedicated project lead', 'API integration support']
+      title: 'Custom Model Evolution',
+      icon: <Brain className="w-8 h-8" />,
+      desc: 'We don\'t just label; we integrate. Our pipeline feeds directly into your retraining architecture.',
+      features: ['Automated Feedback Loops', 'Edge-Case Identification', 'Domain Adaptation']
     },
     {
-      name: 'Enterprise',
-      price: 'Custom Quote',
-      desc: 'Proprietary workflows and air-gapped security for sensitive enterprise data.',
-      features: ['SLA-guaranteed accuracy', 'Retraining pipeline integration', 'On-site consultation', 'Quarterly data Audits', '24/7 technical assistance']
+      title: 'Enterprise-Grade Security',
+      icon: <Lock className="w-8 h-8" />,
+      desc: 'Proprietary workflows designed for sensitive PII and HIPAA-regulated data environments.',
+      features: ['Air-Gapped Infrastructure', 'Biometric Access Control', 'Full Audit Trail']
     }
   ];
 
   return (
-    <div className="bg-navy min-h-screen pt-40 pb-24">
+    <div className="bg-[#0D0B1A] min-h-screen pt-40 pb-24">
       <div className="container mx-auto px-6">
-        <div className="text-center mb-24 max-w-3xl mx-auto">
+        <div className="text-center mb-20 max-w-3xl mx-auto">
           <motion.h1 
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="text-5xl font-extrabold text-white mb-8 tracking-tighter"
+            className="text-6xl font-extrabold text-white mb-8 tracking-tighter"
           >
-            Surgical Data <span className="text-primary italic">Solutions</span>
+            Surgical Data <span className="bg-gradient-to-r from-[#C17BFF] to-[#9D4EDD] bg-clip-text text-transparent italic">Solutions</span>
           </motion.h1>
-          <p className="text-slate-400 text-lg">Choose from our pre-defined tiers or contact us for a custom-built data solution for your specialized AI architecture.</p>
+          <p className="text-slate-400 text-lg">We provide specialized AI data architecture for mission-critical applications. Our enterprise workflows are designed to scale with your breakthroughs.</p>
         </div>
 
-        {/* Pricing Tiers */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {tiers.map((tier, idx) => (
+        {/* Capabilities Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
+          {capabilities.map((cap, idx) => (
             <motion.div 
               key={idx}
               initial={{ opacity: 0, y: 30 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: idx * 0.1 }}
-              className={`p-10 rounded-3xl border ${tier.name === 'Pro' ? 'bg-slate-900 border-primary relative' : 'bg-slate-900/50 border-slate-800'} transition-all hover:shadow-[0_0_30px_rgba(59,130,246,0.1)]`}
+              className="p-10 rounded-[2rem] border border-[#2A2740] bg-[#131127]/50 transition-all hover:bg-[#1A1733] hover:border-[#C17BFF]/30 group shadow-2xl"
             >
-              {tier.name === 'Pro' && (
-                <div className="absolute top-0 right-10 bg-primary text-white text-[10px] uppercase font-bold px-4 py-1 rounded-b-lg tracking-widest">
-                  Most Popular
-                </div>
-              )}
-              <h3 className="text-2xl font-bold text-white mb-2 tracking-tight uppercase">{tier.name}</h3>
-              <div className="text-4xl font-extrabold text-white mb-6 tracking-tighter">{tier.price}</div>
-              <p className="text-slate-500 text-sm mb-10 leading-relaxed">{tier.desc}</p>
+              <div className="w-16 h-16 rounded-2xl bg-[#C17BFF]/10 flex items-center justify-center text-[#C17BFF] mb-8 group-hover:scale-110 transition-transform">
+                {cap.icon}
+              </div>
+              <h3 className="text-2xl font-bold text-white mb-4 tracking-tight">{cap.title}</h3>
+              <p className="text-slate-500 text-sm mb-8 leading-relaxed">{cap.desc}</p>
               
-              <ul className="space-y-4 mb-12">
-                {tier.features.map((feat, fIdx) => (
+              <ul className="space-y-4 mb-10">
+                {cap.features.map((feat, fIdx) => (
                   <li key={fIdx} className="flex items-center space-x-3 text-slate-300 text-sm">
-                    <CheckCircle className="w-4 h-4 text-primary shrink-0" />
+                    <CheckCircle className="w-4 h-4 text-[#C17BFF]" />
                     <span>{feat}</span>
                   </li>
                 ))}
               </ul>
-
-              <button className={`w-full py-4 rounded-xl font-bold text-sm uppercase tracking-widest transition-all ${tier.name === 'Pro' ? 'btn-primary' : 'bg-slate-800 text-white hover:bg-slate-700'}`}>
-                {tier.name === 'Enterprise' ? 'Speak To Sales' : 'Get Started'}
-              </button>
             </motion.div>
           ))}
         </div>
+
+        <motion.div 
+          initial={{ opacity: 0 }}
+          whileInView={{ opacity: 1 }}
+          className="mt-20 p-12 rounded-[3rem] bg-gradient-to-r from-[#131127] to-[#1A1733] border border-[#2A2740] text-center"
+        >
+          <h2 className="text-3xl font-bold text-white mb-4">Request a Proprietary Workflow</h2>
+          <p className="text-slate-400 mb-8 max-w-xl mx-auto">Have a specialized data requirement? Our architects are ready to build your custom pipeline.</p>
+          <Link to="/request" className="inline-block px-10 py-4 rounded-xl bg-[#C17BFF] text-white font-bold hover:bg-[#9D4EDD] transition-all shadow-lg shadow-[#C17BFF]/20">
+            Consult With An Architect
+          </Link>
+        </motion.div>
       </div>
     </div>
   );
