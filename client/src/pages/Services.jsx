@@ -1,13 +1,25 @@
-import React from 'react';
-import { motion } from 'framer-motion';
 import { 
   Database, Cpu, Globe, ShieldCheck, 
   Network, Settings, ArrowRight, Zap, 
   CheckCircle2, Mail 
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 
 const Services = () => {
+  const { user } = useAuth();
+  const navigate = useNavigate();
+
+  const handleTryNow = () => {
+    const destination = '/dashboard/auto-annotate';
+    if (!user) {
+      sessionStorage.setItem('redirectAfterLogin', destination);
+      navigate('/login');
+    } else {
+      navigate(destination);
+    }
+  };
+
   const secondaryServices = [
     {
       title: 'Dataset Collection',
@@ -113,9 +125,12 @@ const Services = () => {
             </ul>
 
             <div className="flex flex-wrap gap-4">
-              <Link to="/dashboard/auto-annotate" className="px-8 py-3.5 rounded-full bg-[#C17BFF] text-white font-bold hover:bg-[#A855F7] transition-all flex items-center gap-2 group/btn shadow-lg shadow-[#C17BFF]/20">
+              <button 
+                onClick={handleTryNow}
+                className="px-8 py-3.5 rounded-full bg-[#C17BFF] text-white font-bold hover:bg-[#A855F7] transition-all flex items-center gap-2 group/btn shadow-lg shadow-[#C17BFF]/20"
+              >
                 Try Now <ArrowRight className="w-4 h-4 group-hover/btn:translate-x-1 transition-transform" />
-              </Link>
+              </button>
               <button className="px-8 py-3.5 rounded-full bg-white/5 border border-white/10 text-white font-bold hover:bg-white/10 transition-all">
                 Explore Documentation
               </button>

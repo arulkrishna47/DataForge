@@ -39,7 +39,16 @@ const Login = () => {
       if (isLogin) {
         const data = await login(email, password);
         toast.success('Welcome back to Cortexa!');
-        // Check role from Supabase user_metadata or VITE_ADMIN_EMAIL
+        
+        // Check for smart redirect
+        const savedRedirect = sessionStorage.getItem('redirectAfterLogin');
+        if (savedRedirect) {
+          sessionStorage.removeItem('redirectAfterLogin');
+          navigate(savedRedirect);
+          return;
+        }
+
+        // Default role-based routing
         const isAdminEmail = (email.toLowerCase() === (import.meta.env.VITE_ADMIN_EMAIL || '').toLowerCase());
         const role = (isAdminEmail ? 'admin' : (data?.user?.user_metadata?.role || 'client')).toLowerCase();
         if (role === 'admin') {

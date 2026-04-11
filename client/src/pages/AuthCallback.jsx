@@ -19,6 +19,14 @@ const AuthCallback = () => {
 
       const role = session.user?.user_metadata?.role || 'client';
 
+      // Check for smart redirect
+      const savedRedirect = sessionStorage.getItem('redirectAfterLogin');
+      if (savedRedirect) {
+        sessionStorage.removeItem('redirectAfterLogin');
+        navigate(savedRedirect);
+        return;
+      }
+
       if (role === 'admin') {
         navigate('/admin');
       } else {
