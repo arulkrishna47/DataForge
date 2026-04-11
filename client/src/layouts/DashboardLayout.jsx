@@ -54,7 +54,6 @@ const DashboardLayout = () => {
   const menuItems = [
     { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
     { name: 'Project Detail', path: '/dashboard/project/latest', icon: FolderKanban },
-    { name: 'Auto Annotate', path: '/dashboard/auto-annotate', icon: Scan },
     { name: 'Settings', path: '/dashboard/settings', icon: Settings },
   ];
 

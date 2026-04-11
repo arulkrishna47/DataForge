@@ -15,8 +15,7 @@ const Services = () => {
   const handleTryNow = () => {
     const destination = '/dashboard/auto-annotate';
     if (!user) {
-      sessionStorage.setItem('redirectAfterLogin', destination);
-      navigate('/login');
+      navigate(`/login?redirect=${encodeURIComponent(destination)}`);
     } else {
       navigate(destination);
     }
@@ -132,9 +131,6 @@ const Services = () => {
                 className="px-8 py-3.5 rounded-full bg-[#C17BFF] text-white font-bold hover:bg-[#A855F7] transition-all flex items-center gap-2 group/btn shadow-lg shadow-[#C17BFF]/20"
               >
                 Try Now <ArrowRight className="w-4 h-4 group-hover/btn:translate-x-1 transition-transform" />
-              </button>
-              <button className="px-8 py-3.5 rounded-full bg-white/5 border border-white/10 text-white font-bold hover:bg-white/10 transition-all">
-                Explore Documentation
               </button>
             </div>
           </div>

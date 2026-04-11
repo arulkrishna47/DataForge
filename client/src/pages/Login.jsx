@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../utils/supabaseClient';
 import { toast } from 'sonner';
@@ -30,6 +30,15 @@ const Login = () => {
   const [oauthLoading, setOauthLoading] = useState('');
   const [error, setError] = useState('');
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const redirectPath = searchParams.get('redirect');
+
+  // If redirect exists, store it for OAuth callback as well
+  useEffect(() => {
+    if (redirectPath) {
+      sessionStorage.setItem('oauth_redirect', redirectPath);
+    }
+  }, [redirectPath]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -40,11 +49,9 @@ const Login = () => {
         const data = await login(email, password);
         toast.success('Welcome back to Cortexa!');
         
-        // Check for smart redirect
-        const savedRedirect = sessionStorage.getItem('redirectAfterLogin');
-        if (savedRedirect) {
-          sessionStorage.removeItem('redirectAfterLogin');
-          navigate(savedRedirect);
+        // Use smart redirect from URL params
+        if (redirectPath) {
+          navigate(redirectPath);
           return;
         }
 
@@ -59,6 +66,10 @@ const Login = () => {
       } else {
         await register(email, password, { first_name: firstName, last_name: lastName, role: 'client' });
         toast.success('Account created! Check your email to verify.');
+        
+        // If they just registered and we have a redirect, they might need to verify first, 
+        // but if confirmation is off, we can try to send them there.
+        // For now, let's stick to the verify message.
         setIsLogin(true);
       }
     } catch (err) {

@@ -18,12 +18,11 @@ const AuthCallback = () => {
       }
 
       const role = session.user?.user_metadata?.role || 'client';
+      const oauthRedirect = sessionStorage.getItem('oauth_redirect');
 
-      // Check for smart redirect
-      const savedRedirect = sessionStorage.getItem('redirectAfterLogin');
-      if (savedRedirect) {
-        sessionStorage.removeItem('redirectAfterLogin');
-        navigate(savedRedirect);
+      if (oauthRedirect) {
+        sessionStorage.removeItem('oauth_redirect');
+        navigate(oauthRedirect);
         return;
       }
 
