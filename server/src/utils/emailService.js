@@ -53,6 +53,7 @@ const sendEmail = async (to, subject, html) => {
     return info; // Return info for debugging
   } catch (err) {
     console.error(`Email Service Error: [${subject}] to [${to}] failed.`, err.message);
+    throw err; // Re-throw so the controller knows it failed
   }
 };
 
