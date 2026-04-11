@@ -2,14 +2,15 @@ const nodemailer = require('nodemailer');
 
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || 'smtp.gmail.com',
-  port: 587, // Port 587 is more compatible with cloud firewalls
-  secure: false, // Must be false for port 587 (uses STARTTLS)
+  port: 465, // Switching to SSL port
+  secure: true, // true for 465, false for other ports
   auth: {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
   },
-  connectionTimeout: 10000,
-  greetingTimeout: 10000,
+  connectionTimeout: 15000,
+  greetingTimeout: 15000,
+  socketTimeout: 30000,
 });
 
 const sendProjectAcceptedEmail = async (user, project) => {
