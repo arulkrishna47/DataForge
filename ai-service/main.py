@@ -29,19 +29,24 @@ OUTPUT_DIR = Path("outputs")
 UPLOAD_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-# --- GLOBAL MODEL INSTANCE (Preventing OOM Crashes) ---
-# We initialize with generic labels; thresholds are passed per-request now.
-print("[SYSTEM] Pre-loading AI Brain into VRAM...")
-GLOBAL_ENGINE = ImageAnnotator(labels=["person", "object"], box_threshold=0.35, text_threshold=0.25)
-VIDEO_ENGINE = VideoAnnotator(GLOBAL_ENGINE)
-print("[SYSTEM] AI Brain Loaded & Shared.")
-
-# Global Job Storage
+# Global Job Storage and Engine State
 jobs = {}
+GLOBAL_ENGINE = None
+VIDEO_ENGINE = None
+
+def get_engine():
+    global GLOBAL_ENGINE, VIDEO_ENGINE
+    if GLOBAL_ENGINE is None:
+        print("[SYSTEM] Lazy Loading AI Brain into VRAM...")
+        # Start with dummy labels to pre-load weights
+        GLOBAL_ENGINE = ImageAnnotator(labels=["person"], box_threshold=0.35, text_threshold=0.25)
+        VIDEO_ENGINE = VideoAnnotator(GLOBAL_ENGINE)
+        print("[SYSTEM] Brain Online.")
+    return GLOBAL_ENGINE, VIDEO_ENGINE
 
 @app.get("/health")
 async def health():
-  return {"status": "ok", "service": "Cortexa AI"}
+  return {"status": "ok", "service": "Cortexa AI", "brain_loaded": GLOBAL_ENGINE is not None}
 
 @app.post("/annotate")
 async def start_annotation(
@@ -104,10 +109,13 @@ async def run_annotation_job(job_id, file_paths, labels, export_format, box_th, 
   try:
     jobs[job_id]["status"] = "processing"
     
-    # Update global engine parameters for THIS specific job
-    GLOBAL_ENGINE.labels = labels
-    GLOBAL_ENGINE.box_threshold = box_th
-    GLOBAL_ENGINE.text_threshold = text_th
+    # Lazy load the models only when needed
+    image_engine, video_engine = get_engine()
+    
+    # Update engine parameters for THIS specific job
+    image_engine.labels = labels
+    image_engine.box_threshold = box_th
+    image_engine.text_threshold = text_th
     
     output_dir = OUTPUT_DIR / job_id
     output_dir.mkdir(exist_ok=True)
@@ -121,9 +129,9 @@ async def run_annotation_job(job_id, file_paths, labels, export_format, box_th, 
       await sio.emit("job_progress", {"job_id": job_id, "progress": jobs[job_id]["progress"], "message": msg})
       
       if ext in video_extensions:
-        res = VIDEO_ENGINE.annotate_video(fp, str(output_dir), export_format)
+        res = video_engine.annotate_video(fp, str(output_dir), export_format)
       else:
-        res = GLOBAL_ENGINE.annotate_image(fp, str(output_dir), export_format)
+        res = image_engine.annotate_image(fp, str(output_dir), export_format)
         
       if "error" in res: raise Exception(res["error"])
 
