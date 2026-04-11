@@ -112,7 +112,7 @@ const sendNewServiceRequestAdminEmail = async (adminEmail, request, clientInfo) 
       <p style="margin-top: 30px;"><a href="${process.env.VITE_URL || 'http://localhost:5174'}/admin" style="color: #C17BFF; text-decoration: underline; font-size: 13px;">Open Admin Dashboard</a></p>
     </div>
   `;
-  await sendEmail(adminEmail, `New Service Request: ${request.serviceType}`, html);
+  return await sendEmail(adminEmail, `New Service Request: ${request.serviceType}`, html);
 };
 
 const sendVerificationEmail = async (email, otp) => {
