@@ -33,6 +33,16 @@ def nms(boxes, scores, iou_threshold):
         order = order[inds + 1]
     return keep
 
+# Manual Box Conversion (cxcywh -> xyxy) to avoid supervision version issues
+def custom_box_convert(boxes_cxcywh):
+    # boxes_cxcywh is [cx, cy, w, h]
+    boxes_xyxy = torch.zeros_like(boxes_cxcywh)
+    boxes_xyxy[:, 0] = boxes_cxcywh[:, 0] - boxes_cxcywh[:, 2] / 2 # x1
+    boxes_xyxy[:, 1] = boxes_cxcywh[:, 1] - boxes_cxcywh[:, 3] / 2 # y1
+    boxes_xyxy[:, 2] = boxes_cxcywh[:, 0] + boxes_cxcywh[:, 2] / 2 # x2
+    boxes_xyxy[:, 3] = boxes_cxcywh[:, 1] + boxes_cxcywh[:, 3] / 2 # y2
+    return boxes_xyxy
+
 class ImageAnnotator:
   def __init__(self, labels: list[str], box_threshold: float = 0.35, text_threshold: float = 0.25):
     self.labels = labels
@@ -48,7 +58,6 @@ class ImageAnnotator:
         checkpoint_path = os.path.join("ai-service", checkpoint_path)
 
     print(f"[DEBUG] Initializing GroundingDINO Model on {self.device}...")
-    # Use standard GroundingDINO loading for better tile support
     self.model = Model(
         model_config_path=config_path, 
         model_checkpoint_path=checkpoint_path, 
@@ -65,7 +74,6 @@ class ImageAnnotator:
     print("[DEBUG] AI Engine Specialized for Crowds Ready!")
 
   def _preprocess(self, cv2_img):
-    # Match GroundingDINO expected transform
     transform = T.Compose([
         T.RandomResize([800], max_size=1333),
         T.ToTensor(),
@@ -89,9 +97,8 @@ class ImageAnnotator:
         all_class_id = []
 
         # TILING LOGIC: Split image into 4 quadrants with 15% overlap
-        # This is key for 100% accuracy in crowds
         tiles = [
-            (0, 0, w_orig, h_orig), # Full image (for big objects)
+            (0, 0, w_orig, h_orig), # Full image
             (0, 0, int(w_orig * 0.6), int(h_orig * 0.6)), # Top Left
             (int(w_orig * 0.4), 0, w_orig, int(h_orig * 0.6)), # Top Right
             (0, int(h_orig * 0.4), int(w_orig * 0.6), h_orig), # Bottom Left
@@ -104,7 +111,6 @@ class ImageAnnotator:
             tile_img = image_source[ty:th, tx:tw]
             t_h, t_w = tile_img.shape[:2]
             
-            # Predict on tile
             processed_tile = self._preprocess(tile_img)
             boxes, logits, phrases = predict(
                 model=self.model.model, 
@@ -117,9 +123,10 @@ class ImageAnnotator:
 
             if len(boxes) > 0:
                 # Convert normalized tile boxes to absolute global coordinates
-                boxes = boxes * torch.Tensor([t_w, t_h, t_w, t_h])
-                # Convert center-xywh to xyxy
-                boxes_xyxy = sv.box_convert(boxes, "cxcywh", "xyxy").numpy()
+                boxes_scaled = boxes * torch.Tensor([t_w, t_h, t_w, t_h])
+                # CENTER-XYWH -> XYXY MANUAL
+                boxes_xyxy = custom_box_convert(boxes_scaled).numpy()
+                
                 # Offset by tile position
                 boxes_xyxy[:, [0, 2]] += tx
                 boxes_xyxy[:, [1, 3]] += ty
@@ -127,7 +134,6 @@ class ImageAnnotator:
                 all_boxes.append(boxes_xyxy)
                 all_conf.append(logits.numpy())
                 
-                # Assign class IDs based on phrases
                 tile_cids = []
                 for p in phrases:
                     found = False
@@ -142,22 +148,19 @@ class ImageAnnotator:
         if not all_boxes:
             return {"file": image_path if isinstance(image_path, str) else "video", "detections": 0, "message": "No objects"}
 
-        # Combine and NMS
         combined_boxes = np.vstack(all_boxes)
         combined_conf = np.concatenate(all_conf)
         combined_cids = np.concatenate(all_class_id)
         
-        keep_indices = nms(combined_boxes, combined_conf, 0.45) # Merge overlapping crowd boxes
+        keep_indices = nms(combined_boxes, combined_conf, 0.45) 
         
         final_boxes = combined_boxes[keep_indices]
         final_conf = combined_conf[keep_indices]
         final_cids = combined_cids[keep_indices]
 
-        # CLIP TO IMAGE BOUNDS
         final_boxes[:, [0, 2]] = np.clip(final_boxes[:, [0, 2]], 0, w_orig)
         final_boxes[:, [1, 3]] = np.clip(final_boxes[:, [1, 3]], 0, h_orig)
 
-        # SAM Segmentation
         image_rgb = cv2.cvtColor(image_source, cv2.COLOR_BGR2RGB)
         sam_results = self.sam_model(image_rgb, bboxes=final_boxes, verbose=False)
         
@@ -171,7 +174,6 @@ class ImageAnnotator:
                 resized_masks.append(resized > 0.5)
             masks = np.array(resized_masks)
 
-        # Preview
         final_phrases = [self.labels[cid] for cid in final_cids]
         annotated = self._draw_annotations(image_rgb, final_boxes, final_cids, final_conf, final_phrases, masks)
 
@@ -182,17 +184,18 @@ class ImageAnnotator:
         preview_path.parent.mkdir(exist_ok=True, parents=True)
         cv2.imwrite(str(preview_path), cv2.cvtColor(annotated, cv2.COLOR_RGB2BGR))
 
-        # Export
         if export_format.lower() == "yolo":
           self._export_yolo(image_name, final_boxes, final_cids, w_orig, h_orig, out_path)
 
         return {
           "file": image_path if isinstance(image_path, str) else "frame",
           "detections": len(final_boxes),
-          "preview": str(Path("outputs") / out_path.name / "previews" / preview_filename) if "outputs" in str(out_path) else str(preview_path)
+          "preview": f"/dashboard/auto-preview?path={str(preview_path)}"
         }
     except Exception as e:
         print(f"[FATAL AI ERROR] {str(e)}")
+        import traceback
+        traceback.print_exc()
         return {"error": f"AI Brain Error: {str(e)}"}
 
   def _draw_annotations(self, image, boxes, class_ids, confidences, phrases, masks=None):
