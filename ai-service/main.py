@@ -159,4 +159,5 @@ async def run_annotation_job(job_id, file_paths, labels, export_format, box_th, 
         shutil.rmtree(job_upload_dir)
 
 if __name__ == "__main__":
-  uvicorn.run(socket_app, host="0.0.0.0", port=8000)
+  # Use port 7860 for Hugging Face compatibility
+  uvicorn.run(socket_app, host="0.0.0.0", port=7860)
