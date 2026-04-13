@@ -17,6 +17,10 @@ import ProjectDetail from './pages/ProjectDetail';
 import ClientSettings from './pages/ClientSettings';
 import AutoAnnotate from './pages/AutoAnnotate';
 
+// Service Pages
+import VideoToFrames from './pages/services/VideoToFrames';
+import ComingSoon from './pages/services/ComingSoon';
+
 import AdminLayout from './layouts/AdminLayout';
 import AdminDashboard from './pages/admin/AdminDashboard';
 import RequestInbox from './pages/admin/RequestInbox';
@@ -49,6 +53,14 @@ function App() {
               <Route path="settings" element={<ClientSettings />} />
               <Route path="auto-annotate" element={<AutoAnnotate />} />
             </Route>
+            
+            {/* Direct Service Tools (Protected but outside dashboard sidebar) */}
+            <Route path="/services/video-to-frames" element={<VideoToFrames />} />
+            <Route path="/services/dataset-collection" element={<ComingSoon title="Dataset Collection" />} />
+            <Route path="/services/ml-training" element={<ComingSoon title="ML Model Training" />} />
+            <Route path="/services/ai-safety" element={<ComingSoon title="AI Safety & Bias" />} />
+            <Route path="/services/neural-api" element={<ComingSoon title="Neural API" />} />
+            <Route path="/services/custom-pipeline" element={<ComingSoon title="Custom Pipeline" />} />
           </Route>
 
           {/* Protected Admin Routes */}

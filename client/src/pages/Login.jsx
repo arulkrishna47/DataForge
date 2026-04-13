@@ -1,193 +1,242 @@
 import { useState, useEffect } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../utils/supabaseClient';
 import { toast } from 'sonner';
-
-const GoogleSVG = () => (
-  <svg viewBox="0 0 24 24" width="20" height="20">
-    <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-    <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-    <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
-    <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-  </svg>
-);
-
-const GitHubSVG = () => (
-  <svg viewBox="0 0 24 24" width="20" height="20" className="fill-white">
-    <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
-  </svg>
-);
+import { 
+  Lock, Mail, Eye, EyeOff, Github, 
+  Chrome, ArrowRight, UserPlus, LogIn,
+  AlertCircle, Shield
+} from 'lucide-react';
 
 const Login = () => {
-  const { login, register } = useAuth();
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState('');
   const [error, setError] = useState('');
+  
   const navigate = useNavigate();
   const location = useLocation();
-  const from = location.state?.from || sessionStorage.getItem('redirectAfterLogin');
+  const { login, register } = useAuth();
 
-  // If we have a destination, persist it even through social login handshakes
-  useEffect(() => {
-    if (location.state?.from) {
-      sessionStorage.setItem('redirectAfterLogin', location.state.from);
-    }
-  }, [location.state]);
+  // Get message from navigation state (used by AuthGuard)
+  const message = location.state?.message;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setError('');
     setLoading(true);
+    setError('');
+
     try {
       if (isLogin) {
         const data = await login(email, password);
         toast.success('Welcome back to Cortexa!');
         
-        // Smart Redirect Logic
-        const savedRedirect = sessionStorage.getItem('redirectAfterLogin');
-        if (savedRedirect) {
-          sessionStorage.removeItem('redirectAfterLogin');
-          navigate(savedRedirect);
-          return;
-        }
-
-        // Default role-based routing
-        const isAdminEmail = (email.toLowerCase() === (import.meta.env.VITE_ADMIN_EMAIL || '').toLowerCase());
-        const role = (isAdminEmail ? 'admin' : (data?.user?.user_metadata?.role || 'client')).toLowerCase();
-        if (role === 'admin') {
-          navigate('/admin');
+        // Handle post-login redirection from localStorage
+        const redirectTo = localStorage.getItem('redirectAfterLogin');
+        if (redirectTo) {
+          localStorage.removeItem('redirectAfterLogin');
+          navigate(redirectTo);
         } else {
-          navigate('/dashboard');
+          // Default role-based routing
+          const isAdminEmail = (email.toLowerCase() === (import.meta.env.VITE_ADMIN_EMAIL || '').toLowerCase());
+          const role = (isAdminEmail ? 'admin' : (data?.user?.user_metadata?.role || 'client')).toLowerCase();
+          navigate(role === 'admin' ? '/admin' : '/dashboard');
         }
       } else {
-        await register(email, password, { first_name: firstName, last_name: lastName, role: 'client' });
+        await register(email, password, { 
+          first_name: firstName, 
+          last_name: lastName, 
+          role: 'client' 
+        });
         toast.success('Account created! Check your email to verify.');
-        
-        // If they just registered and we have a redirect, they might need to verify first, 
-        // but if confirmation is off, we can try to send them there.
-        // For now, let's stick to the verify message.
         setIsLogin(true);
       }
     } catch (err) {
-      const msg = err.message || 'Authentication failed.';
-      setError(msg);
-      toast.error(msg);
+      setError(err.message);
+      toast.error(err.message);
     } finally {
       setLoading(false);
     }
   };
 
   const handleOAuth = async (provider) => {
-    setOauthLoading(provider);
     try {
+      setOauthLoading(provider);
       const { error } = await supabase.auth.signInWithOAuth({
         provider,
         options: {
-          redirectTo: `${window.location.origin}/auth/callback`,
+          redirectTo: `${window.location.origin}/auth/callback`
         }
       });
       if (error) throw error;
     } catch (err) {
-      toast.error(err.message || `${provider} login failed.`);
+      toast.error(err.message);
+    } finally {
       setOauthLoading('');
     }
   };
 
   return (
-    <div className="bg-[#0D0B1A] min-h-screen flex items-center justify-center p-6"
-      style={{ background: 'radial-gradient(ellipse at top, rgba(193,123,255,0.08) 0%, #0D0B1A 60%)' }}>
-      <div className="max-w-md w-full bg-white/[0.03] backdrop-blur-2xl border border-white/10 p-10 rounded-[2rem] shadow-2xl text-center">
-        
-        <img src="/logo.png" alt="Cortexa logo" style={{ height: '56px', width: 'auto' }} className="mx-auto mb-5" />
-        <h1 className="text-2xl font-bold text-white mb-1 tracking-tight uppercase">
-          {isLogin ? 'Login' : 'Sign Up'}
-        </h1>
-        <p className="text-slate-500 mb-7 text-sm">
-          {isLogin ? 'Welcome back to Cortexa.' : 'Create your account to start building.'}
-        </p>
+    <div className="min-h-screen bg-[#050508] text-white flex items-center justify-center p-6 selection:bg-[#C17BFF]/30 font-sans">
+      {/* Background Orbs */}
+      <div className="fixed top-0 left-0 w-full h-full overflow-hidden pointer-events-none z-0">
+        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-[#C17BFF]/5 rounded-full blur-[120px]" />
+        <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-blue-500/5 rounded-full blur-[120px]" />
+      </div>
 
-        {/* OAuth Buttons */}
-        <div className="flex flex-col gap-3 mb-6">
-          <button
-            onClick={() => handleOAuth('google')}
-            disabled={!!oauthLoading}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-white text-sm font-medium transition-all disabled:opacity-50"
-          >
-            <GoogleSVG />
-            <span className="flex-1 text-center">
-              {oauthLoading === 'google' ? 'Redirecting...' : 'Continue with Google'}
-            </span>
-          </button>
-          <button
-            onClick={() => handleOAuth('github')}
-            disabled={!!oauthLoading}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-white text-sm font-medium transition-all disabled:opacity-50"
-          >
-            <GitHubSVG />
-            <span className="flex-1 text-center">
-              {oauthLoading === 'github' ? 'Redirecting...' : 'Continue with GitHub'}
-            </span>
-          </button>
+      <div className="w-full max-w-md relative z-10">
+        {/* Logo */}
+        <div className="text-center mb-10">
+          <Link to="/" className="inline-flex items-center gap-2 mb-4">
+             <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-[#C17BFF] to-[#8B5CF6] flex items-center justify-center shadow-lg shadow-[#C17BFF]/20">
+                <Shield className="w-6 h-6 text-white" />
+             </div>
+             <span className="text-2xl font-bold tracking-tight">Cortexa</span>
+          </Link>
+          <h1 className="text-3xl font-bold tracking-tight">
+            {isLogin ? 'Neural Access' : 'Create Identity'}
+          </h1>
+          <p className="text-slate-500 mt-2">
+            {isLogin ? 'Enter your credentials to continue' : 'Join the next era of synthetic cognition'}
+          </p>
         </div>
 
-        {/* Divider */}
-        <div className="flex items-center gap-3 mb-6">
-          <div className="flex-1 h-px bg-white/10" />
-          <span className="text-xs text-slate-500 font-medium">OR</span>
-          <div className="flex-1 h-px bg-white/10" />
-        </div>
-
-        {error && (
-          <div className="p-3 bg-red-900/20 border border-red-500/30 text-red-400 text-xs rounded-lg mb-5">
-            {error}
-          </div>
+        {/* Auth Guard Message Banner */}
+        {message && (
+          <motion.div 
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-6 p-4 rounded-2xl bg-[#C17BFF]/10 border border-[#C17BFF]/30 flex items-center gap-3 text-[#C17BFF] text-sm font-medium"
+          >
+            <Lock className="w-4 h-4 flex-shrink-0" />
+            <span>{message}</span>
+          </motion.div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-3 text-left">
-          {!isLogin && (
-            <div className="flex gap-3">
-              <input
-                type="text" placeholder="First Name" required
-                className="w-full bg-black/30 border border-white/10 p-3.5 rounded-xl text-white outline-none focus:border-[#C17BFF] transition-all text-sm"
-                value={firstName} onChange={(e) => setFirstName(e.target.value)}
-              />
-              <input
-                type="text" placeholder="Last Name" required
-                className="w-full bg-black/30 border border-white/10 p-3.5 rounded-xl text-white outline-none focus:border-[#C17BFF] transition-all text-sm"
-                value={lastName} onChange={(e) => setLastName(e.target.value)}
-              />
-            </div>
-          )}
-          <input
-            type="email" placeholder="Email Address" required
-            className="w-full bg-black/30 border border-white/10 p-3.5 rounded-xl text-white outline-none focus:border-[#C17BFF] transition-all text-sm"
-            value={email} onChange={(e) => setEmail(e.target.value)}
-          />
-          <input
-            type="password" placeholder="Password" required
-            className="w-full bg-black/30 border border-white/10 p-3.5 rounded-xl text-white outline-none focus:border-[#C17BFF] transition-all text-sm"
-            value={password} onChange={(e) => setPassword(e.target.value)}
-          />
-          <button
-            disabled={loading}
-            className="w-full bg-[#C17BFF] hover:bg-[#9B4FD4] text-white py-3.5 rounded-xl uppercase tracking-widest font-bold transition-all shadow-lg shadow-purple-500/20 active:scale-95 disabled:opacity-50 mt-2"
-          >
-            {loading ? 'Processing...' : (isLogin ? 'Authenticate' : 'Register Account')}
-          </button>
-        </form>
+        <div className="bg-[#0D0D15] border border-white/5 rounded-3xl p-8 shadow-2xl relative overflow-hidden group">
+          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-[#C17BFF]/40 to-transparent" />
+          
+          <form onSubmit={handleSubmit} className="space-y-5">
+            {!isLogin && (
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">First Name</label>
+                  <input 
+                    type="text" required
+                    className="w-full bg-[#08080C] border border-white/5 rounded-xl py-3 px-4 focus:outline-none focus:border-[#C17BFF]/40 transition-all text-sm"
+                    value={firstName} onChange={(e) => setFirstName(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">Last Name</label>
+                  <input 
+                    type="text" required
+                    className="w-full bg-[#08080C] border border-white/5 rounded-xl py-3 px-4 focus:outline-none focus:border-[#C17BFF]/40 transition-all text-sm"
+                    value={lastName} onChange={(e) => setLastName(e.target.value)}
+                  />
+                </div>
+              </div>
+            )}
 
-        <button
-          type="button"
-          onClick={() => { setIsLogin(!isLogin); setError(''); }}
-          className="mt-7 text-sm text-slate-400 hover:text-white transition-colors"
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">Neural ID (Email)</label>
+              <div className="relative">
+                <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-600" />
+                <input 
+                  type="email" required
+                  className="w-full bg-[#08080C] border border-white/5 rounded-xl py-3 pl-12 pr-4 focus:outline-none focus:border-[#C17BFF]/40 transition-all text-sm"
+                  placeholder="name@cortexa.ai"
+                  value={email} onChange={(e) => setEmail(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex justify-between items-center ml-1">
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">Passkey</label>
+                {isLogin && <button type="button" className="text-[10px] text-[#C17BFF] hover:underline">Forgot?</button>}
+              </div>
+              <div className="relative">
+                <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-600" />
+                <input 
+                  type={showPassword ? 'text' : 'password'} required
+                  className="w-full bg-[#08080C] border border-white/5 rounded-xl py-3 pl-12 pr-12 focus:outline-none focus:border-[#C17BFF]/40 transition-all text-sm"
+                  placeholder="••••••••"
+                  value={password} onChange={(e) => setPassword(e.target.value)}
+                />
+                <button 
+                  type="button" onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-600 hover:text-[#C17BFF] transition-colors"
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            {error && (
+              <div className="bg-red-500/10 border border-red-500/20 text-red-500 text-[10px] p-3 rounded-xl flex items-center gap-2">
+                <AlertCircle className="w-3 h-3" />
+                <span>{error}</span>
+              </div>
+            )}
+
+            <button 
+              type="submit" disabled={loading}
+              className="w-full bg-[#C17BFF] hover:bg-[#A855F7] disabled:bg-slate-800 text-white font-bold py-4 rounded-xl transition-all shadow-lg shadow-[#C17BFF]/20 flex items-center justify-center gap-2 group/btn mt-4"
+            >
+              {loading ? (
+                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              ) : (
+                <>
+                  {isLogin ? 'Initialize Uplink' : 'Activate Identity'}
+                  <ArrowRight className="w-4 h-4 group-hover/btn:translate-x-1 transition-transform" />
+                </>
+              )}
+            </button>
+          </form>
+
+          <div className="relative my-8">
+            <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-white/5"></div></div>
+            <div className="relative flex justify-center text-[10px] uppercase tracking-[0.2em] font-bold text-slate-600">
+              <span className="bg-[#0D0D15] px-4 italic">Social Sync</span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <button 
+              onClick={() => handleOAuth('google')}
+              disabled={oauthLoading !== ''}
+              className="flex items-center justify-center gap-3 bg-white/5 border border-white/5 hover:border-white/10 py-3 rounded-xl text-xs font-bold transition-all disabled:opacity-50"
+            >
+              {oauthLoading === 'google' ? <div className="w-4 h-4 border-2 border-slate-400 border-t-white rounded-full animate-spin" /> : <Chrome className="w-4 h-4" />}
+              Google
+            </button>
+            <button 
+              onClick={() => handleOAuth('github')}
+              disabled={oauthLoading !== ''}
+              className="flex items-center justify-center gap-3 bg-white/5 border border-white/5 hover:border-white/10 py-3 rounded-xl text-xs font-bold transition-all disabled:opacity-50"
+            >
+              {oauthLoading === 'github' ? <div className="w-4 h-4 border-2 border-slate-400 border-t-white rounded-full animate-spin" /> : <Github className="w-4 h-4" />}
+              GitHub
+            </button>
+          </div>
+        </div>
+
+        <button 
+          onClick={() => setIsLogin(!isLogin)}
+          className="w-full mt-8 text-slate-500 hover:text-white transition-colors text-sm font-medium flex items-center justify-center gap-2 group"
         >
-          {isLogin ? "Don't have an account? Sign Up" : "Already have an account? Login"}
+          {isLogin ? (
+            <>New to Cortexa? <span className="text-[#C17BFF] font-bold group-hover:underline">Create Identity <UserPlus className="inline w-3 h-3 ml-1" /></span></>
+          ) : (
+            <>Already have an ID? <span className="text-[#C17BFF] font-bold group-hover:underline">Access Uplink <LogIn className="inline w-3 h-3 ml-1" /></span></>
+          )}
         </button>
       </div>
     </div>

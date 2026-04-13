@@ -3,22 +3,20 @@ import { motion } from 'framer-motion';
 import { 
   Database, Cpu, Globe, ShieldCheck, 
   Network, Settings, ArrowRight, Zap, 
-  CheckCircle2, Mail 
+  CheckCircle2, Mail, Video, Film
 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useAuthGuard } from '../utils/authGuard';
 
 const Services = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const { requireAuth } = useAuthGuard();
 
-  const handleTryNow = () => {
-    const destination = '/dashboard/auto-annotate';
-    if (!user) {
-      // Pass the destination via Router state instead of URL params for maximum reliability
-      navigate('/login', { state: { from: destination } });
-    } else {
-      navigate(destination);
+  const handleServiceClick = (path) => {
+    if (requireAuth(path)) {
+      navigate(path);
     }
   };
 
@@ -27,36 +25,37 @@ const Services = () => {
       title: 'Dataset Collection',
       desc: 'Curate high-fidelity multi-modal datasets from distributed global sources with automated privacy filtering.',
       icon: <Database className="w-5 h-5" />,
-      link: '/services/datasets'
+      link: '/services/dataset-collection'
     },
     {
       title: 'ML Model Training',
       desc: 'End-to-end training pipelines for LLMs and Diffusion models on our proprietary compute fabric.',
       icon: <Cpu className="w-5 h-5" />,
-      link: '/services/training'
+      link: '/services/ml-training'
     },
     {
-      title: 'Synthetic Data',
-      desc: 'Generate photorealistic synthetic training environments to bridge the reality gap for edge cases.',
-      icon: <Globe className="w-5 h-5" />,
-      link: '/services/synthetic'
+      title: 'Video to Frame Converter',
+      desc: 'Extract high-quality frames from any video file. Control FPS, resolution, format and time range. Perfect for building image datasets.',
+      icon: <Film className="w-5 h-5" />,
+      link: '/services/video-to-frames'
     },
     {
       title: 'AI Safety & Bias',
       desc: 'Rigorous adversarial testing and bias mitigation protocols to ensure ethical deployment.',
       icon: <ShieldCheck className="w-5 h-5" />,
-      link: '/services/safety'
+      link: '/services/ai-safety'
     },
     {
       title: 'Neural API',
       desc: 'Seamlessly connect your existing stack to our inference engine via enterprise-grade REST APIs.',
       icon: <Network className="w-5 h-5" />,
-      link: '/services/api'
+      link: '/services/neural-api'
     },
     {
       title: 'Custom Pipeline',
       desc: 'Need a bespoke architecture? Our specialists will design a custom intelligence pipeline for your niche.',
       icon: <Settings className="w-5 h-5" />,
+      link: '/services/custom-pipeline',
       isQuote: true
     }
   ];
@@ -128,7 +127,7 @@ const Services = () => {
 
             <div className="flex flex-wrap gap-4">
               <button 
-                onClick={handleTryNow}
+                onClick={() => handleServiceClick('/dashboard/auto-annotate')}
                 className="px-8 py-3.5 rounded-full bg-[#C17BFF] text-white font-bold hover:bg-[#A855F7] transition-all flex items-center gap-2 group/btn shadow-lg shadow-[#C17BFF]/20"
               >
                 Try Now <ArrowRight className="w-4 h-4 group-hover/btn:translate-x-1 transition-transform" />
@@ -145,6 +144,7 @@ const Services = () => {
               initial={{ opacity: 0, y: 20 }}
               whileInView={{ opacity: 1, y: 0 }}
               transition={{ delay: idx * 0.05 }}
+              onClick={() => handleServiceClick(service.link)}
               className="p-8 rounded-3xl bg-[#0D0D15] border border-white/5 hover:border-[#C17BFF]/30 transition-all group cursor-pointer"
             >
               <div className="w-10 h-10 rounded-xl bg-[#C17BFF]/10 flex items-center justify-center text-[#C17BFF] mb-8 group-hover:scale-110 transition-transform">
@@ -180,10 +180,10 @@ const Services = () => {
           <div className="relative z-10">
             <h2 className="text-4xl md:text-5xl font-bold mb-6 tracking-tight">Ready to evolve your data?</h2>
             <p className="text-slate-400 mb-12 max-w-xl mx-auto">
-              Join over 500+ engineering teams accelerating their AI deployment cycles with EtherAI.
+              Join over 500+ engineering teams accelerating their AI deployment cycles with Cortexa.
             </p>
             <div className="flex flex-col md:flex-row items-center justify-center gap-6">
-              <Link to="/register" className="w-full md:w-auto px-10 py-4 rounded-2xl bg-[#C17BFF] text-white font-bold hover:bg-[#A855F7] transition-all shadow-xl shadow-[#C17BFF]/10">
+              <Link to="/login" className="w-full md:w-auto px-10 py-4 rounded-2xl bg-[#C17BFF] text-white font-bold hover:bg-[#A855F7] transition-all shadow-xl shadow-[#C17BFF]/10">
                 Get Started Free
               </Link>
               <button className="flex items-center gap-2 text-sm font-bold tracking-widest uppercase text-white hover:text-[#C17BFF] transition-colors">
@@ -195,7 +195,6 @@ const Services = () => {
 
       </div>
 
-      {/* Footer Minimal */}
       <footer className="mt-32 pt-16 border-t border-white/5 container mx-auto px-6 max-w-7xl flex flex-col md:flex-row items-center justify-between gap-8 pb-10">
         <div>
            <div className="text-xl font-bold mb-2">Cortexa</div>

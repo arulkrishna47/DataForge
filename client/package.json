@@ -16,6 +16,7 @@
     "@tailwindcss/vite": "^4.2.2",
     "axios": "^1.14.0",
     "framer-motion": "^12.38.0",
+    "jszip": "^3.10.1",
     "lucide-react": "^0.477.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
