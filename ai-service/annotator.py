@@ -2,7 +2,6 @@ import os
 import cv2
 import torch
 import numpy as np
-import supervision as sv
 from pathlib import Path
 from PIL import Image
 from ultralytics import SAM
