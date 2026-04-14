@@ -11,10 +11,32 @@ import groundingdino.datasets.transforms as T
 import torchvision.ops as ops
 
 class ImageAnnotator:
-    def __init__(self, labels: list[str], box_threshold: float = 0.20, text_threshold: float = 0.20):
-        self.labels = labels
-        self.box_threshold = box_threshold
-        self.text_threshold = text_threshold
+    def __init__(self, labels, box_threshold: float = 0.20, text_threshold: float = 0.20):
+        # Sanitize labels — handle both string and list
+        if isinstance(labels, str):
+            # "person,car,dog" → ["person", "car", "dog"]
+            self.labels = [l.strip().lower() for l in labels.split(",") if l.strip()]
+        elif isinstance(labels, list):
+            self.labels = [str(l).strip().lower() for l in labels if str(l).strip()]
+        else:
+            self.labels = []
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_labels = []
+        for l in self.labels:
+            if l not in seen:
+                seen.add(l)
+                unique_labels.append(l)
+        self.labels = unique_labels
+        
+        if not self.labels:
+            raise ValueError("No valid labels provided. Please select at least one class.")
+        
+        print(f"Labels loaded: {self.labels}")
+        
+        self.box_threshold = float(box_threshold)
+        self.text_threshold = float(text_threshold)
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         
         config_path = self._find_file("weights/groundingdino_swint_ogc.cfg.py")
@@ -43,14 +65,19 @@ class ImageAnnotator:
         raise FileNotFoundError(f"Cannot find {relative_path}. Searched: {paths}")
 
     def _detect_objects(self, image_path, image_bgr):
+        if not self.labels:
+            raise ValueError("No labels to detect")
+        
+        # Build prompt safely: "label1 . label2 . label3 ."
+        clean_labels = [str(l).strip() for l in self.labels if str(l).strip()]
+        text_prompt = " . ".join(clean_labels) + " ."
+        print(f"Detection prompt: '{text_prompt}'")
+        
         # Load image in GroundingDINO format
         _, image_tensor = load_image(image_path)
         image_tensor = image_tensor.to(self.device)
         
-        # Build text prompt — each label separated by " . "
-        text_prompt = " . ".join(self.labels) + " ."
-        
-        # Lower thresholds to catch more objects
+        # Detection
         boxes, logits, phrases = predict(
             model=self.grounding_model,
             image=image_tensor,
@@ -241,9 +268,10 @@ class ImageAnnotator:
 
 class VideoAnnotator:
     def __init__(self, labels, box_threshold=0.20, text_threshold=0.20, sample_fps=0):
-        self.labels = labels
-        self.sample_fps = sample_fps
+        # ImageAnnotator will handle label sanitization
         self.image_annotator = ImageAnnotator(labels, box_threshold, text_threshold)
+        self.labels = self.image_annotator.labels
+        self.sample_fps = float(sample_fps)
 
     def annotate_video(self, video_path: str, output_dir: str, export_format: str = "yolo") -> dict:
         video_name = Path(video_path).stem

@@ -93,13 +93,17 @@ export default function AutoAnnotate() {
     try {
       const formData = new FormData()
       files.forEach(f => formData.append('files', f))
-      formData.append('labels', labels.join(','))
+      // Send as clean string
+      const labelStr = labels.map(l => l.trim().toLowerCase()).join(',')
+      formData.append('labels', labelStr)
       formData.append('export_format', exportFormat)
-      formData.append('box_threshold', thresholds.box)
-      formData.append('text_threshold', thresholds.text)
-      formData.append('sample_fps', sampleFps)
+      formData.append('box_threshold', thresholds.box.toString())
+      formData.append('text_threshold', thresholds.text.toString())
+      formData.append('sample_fps', sampleFps.toString())
 
-      const { data } = await api.post('/annotate/start', formData, { 
+      console.log('Starting job with labels:', labelStr)
+
+      const { data } = await api.post('/annotate', formData, { 
         headers: { 'Content-Type': 'multipart/form-data' },
         timeout: 0 
       })

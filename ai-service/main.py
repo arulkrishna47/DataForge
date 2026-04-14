@@ -48,6 +48,25 @@ def get_engine():
 async def health():
   return {"status": "ok", "service": "Cortexa AI", "brain_loaded": GLOBAL_ENGINE is not None}
 
+@app.post("/test-labels")
+async def test_labels(labels: str = Form(...)):
+  parsed = []
+  try:
+    import json as _json
+    parsed = _json.loads(labels)
+    if not isinstance(parsed, list): parsed = []
+  except: pass
+  if not parsed:
+    parsed = [l.strip().lower() for l in labels.split(",") if l.strip()]
+  
+  prompt = " . ".join(parsed) + " ." if parsed else ""
+  return {
+    "received": labels,
+    "parsed": parsed,
+    "prompt": prompt,
+    "valid": len(parsed) > 0
+  }
+
 @app.post("/annotate")
 async def start_annotation(
   background_tasks: BackgroundTasks,
@@ -60,7 +79,23 @@ async def start_annotation(
   job_id: str = Form(None),
 ):
   job_id = job_id or str(uuid.uuid4())
-  label_list = [l.strip() for l in labels.split(",") if l.strip()]
+  
+  # Parse labels string into clean list
+  parsed_labels = []
+  try:
+    import json as _json
+    parsed = _json.loads(labels)
+    if isinstance(parsed, list):
+      parsed_labels = [str(l).strip().lower() for l in parsed if str(l).strip()]
+  except: pass
+  
+  if not parsed_labels:
+    parsed_labels = [l.strip().lower() for l in labels.split(",") if l.strip()]
+  
+  if not parsed_labels:
+    return JSONResponse(status_code=400, content={"error": "No valid labels provided"})
+  
+  print(f"Job {job_id}: labels={parsed_labels}")
   
   job_dir = UPLOAD_DIR / job_id
   job_dir.mkdir(exist_ok=True)
@@ -68,8 +103,8 @@ async def start_annotation(
   saved_files = []
   for file in files:
     path = job_dir / file.filename
+    content = await file.read()
     with open(path, "wb") as f:
-      content = await file.read()
       f.write(content)
     saved_files.append(str(path))
 
@@ -77,16 +112,17 @@ async def start_annotation(
     "status": "queued",
     "progress": 0,
     "total": len(saved_files),
+    "message": "Starting...",
     "results": [],
     "error": None
   }
 
   background_tasks.add_task(
     run_annotation_job,
-    job_id, saved_files, label_list, export_format, box_threshold, text_threshold, sample_fps
+    job_id, saved_files, parsed_labels, export_format, box_threshold, text_threshold, sample_fps
   )
 
-  return {"job_id": job_id, "status": "queued", "total_files": len(saved_files)}
+  return {"job_id": job_id, "status": "queued", "total_files": len(saved_files), "labels": parsed_labels}
 
 @app.get("/annotate/status/{job_id}")
 async def get_job_status(job_id: str):
@@ -115,27 +151,48 @@ async def run_annotation_job(job_id, file_paths, labels, export_format, box_th, 
     # Lazy load the models only when needed
     image_engine, video_engine = get_engine()
     
+    # Ensure they use the latest parameters and sterilized labels
+    # We call __init__ logic indirectly by just reassignment since we sanitized in init
+    image_engine.labels = labels
+    image_engine.box_threshold = float(box_th)
+    image_engine.text_threshold = float(text_th)
+    video_engine.image_annotator.labels = labels
+    video_engine.image_annotator.box_threshold = float(box_th)
+    video_engine.image_annotator.text_threshold = float(text_th)
+    video_engine.sample_fps = float(sample_fps)
+    
     jobs[job_id]["message"] = "AI Brain Online. Starting Analysis..."
     await sio.emit("job_progress", {"job_id": job_id, "progress": 5, "message": jobs[job_id]["message"]})
-    
-    # Update engine parameters for THIS specific job
-    image_engine.labels = labels
-    image_engine.box_threshold = box_th
-    image_engine.text_threshold = text_th
-    video_engine.image_annotator.box_threshold = box_th
-    video_engine.image_annotator.text_threshold = text_th
-    video_engine.sample_fps = sample_fps
     
     output_dir = OUTPUT_DIR / job_id
     output_dir.mkdir(exist_ok=True)
     
-    video_extensions = {'.mp4', '.avi', '.mov', '.mkv', '.webm'}
+    video_extensions = {'.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv'}
+    image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.webp', '.tiff'}
     
-    for i, fp in enumerate(file_paths):
+    # Filter files
+    all_files = []
+    for fp in file_paths:
       ext = Path(fp).suffix.lower()
-      msg = f"Analyzing {Path(fp).name} ({i+1}/{len(file_paths)})"
+      if ext == '.zip':
+        extract_dir = Path(fp).parent / "extracted"
+        extract_dir.mkdir(exist_ok=True)
+        with zipfile.ZipFile(fp, 'r') as z:
+          z.extractall(extract_dir)
+        for f in extract_dir.rglob("*"):
+          if f.suffix.lower() in image_extensions or f.suffix.lower() in video_extensions:
+            all_files.append(str(f))
+      else:
+        all_files.append(fp)
+
+    total = len(all_files)
+    jobs[job_id]["total"] = total
+    
+    for i, fp in enumerate(all_files):
+      ext = Path(fp).suffix.lower()
+      fname = Path(fp).name
+      msg = f"Analyzing {fname} ({i+1}/{total})"
       jobs[job_id]["message"] = msg
-      
       await sio.emit("job_progress", {"job_id": job_id, "progress": jobs[job_id]["progress"], "message": msg})
       
       if ext in video_extensions:
@@ -143,10 +200,17 @@ async def run_annotation_job(job_id, file_paths, labels, export_format, box_th, 
       else:
         res = image_engine.annotate_image(fp, str(output_dir), export_format)
         
-      if "error" in res: raise Exception(res["error"])
+      if "error" in res:
+        print(f"File error: {res['error']}")
+        continue
 
-      jobs[job_id]["progress"] = int(((i+1)/len(file_paths))*95)
+      jobs[job_id]["progress"] = int(((i+1)/total)*95)
       jobs[job_id]["results"].append(res)
+      await sio.emit("job_progress", {"job_id": job_id, "progress": jobs[job_id]["progress"], "message": f"Done {fname}"})
+
+    # Save classes.txt explicitly
+    with open(output_dir / "classes.txt", "w") as f:
+      f.write("\n".join(labels))
 
     # ZIP Results
     zip_path = OUTPUT_DIR / f"{job_id}.zip"
@@ -155,8 +219,15 @@ async def run_annotation_job(job_id, file_paths, labels, export_format, box_th, 
         if item.is_file():
           z.write(item, item.relative_to(output_dir))
 
-    jobs[job_id].update({"status": "completed", "progress": 100})
+    jobs[job_id].update({"status": "completed", "progress": 100, "message": "All items completed!"})
     await sio.emit("job_progress", {"job_id": job_id, "status": "completed", "progress": 100})
+
+  except Exception as e:
+    import traceback
+    tb = traceback.format_exc()
+    print(f"[CRITICAL ERROR] Job {job_id} failed: {e}\n{tb}")
+    jobs[job_id].update({"status": "failed", "error": str(e), "message": f"Pipeline error: {str(e)}"})
+    await sio.emit("job_progress", {"job_id": job_id, "status": "failed", "error": str(e)})
 
   except FileNotFoundError as e:
     err_msg = f"Model file missing: {e}. Check weights/ folder."
