@@ -38,8 +38,9 @@ def get_engine():
     global GLOBAL_ENGINE, VIDEO_ENGINE
     if GLOBAL_ENGINE is None:
         print("[SYSTEM] Lazy Loading AI Brain into VRAM...")
-        # Start with dummy labels to pre-load weights
-        GLOBAL_ENGINE = ImageAnnotator(labels=["person"], box_threshold=0.35, text_threshold=0.25)
+        # Start with default labels to pre-load weights
+        GLOBAL_ENGINE = ImageAnnotator(labels=["person"], box_threshold=0.20, text_threshold=0.20)
+        # SHARE the same engine instance to save VRAM
         VIDEO_ENGINE = VideoAnnotator(GLOBAL_ENGINE)
         print("[SYSTEM] Brain Online.")
     return GLOBAL_ENGINE, VIDEO_ENGINE

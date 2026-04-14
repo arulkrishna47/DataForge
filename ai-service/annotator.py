@@ -267,9 +267,12 @@ class ImageAnnotator:
         with open(out_dir / "labels" / f"{name}.txt", "w") as f: f.write("\n".join(lines))
 
 class VideoAnnotator:
-    def __init__(self, labels, box_threshold=0.20, text_threshold=0.20, sample_fps=0):
-        # ImageAnnotator will handle label sanitization
-        self.image_annotator = ImageAnnotator(labels, box_threshold, text_threshold)
+    def __init__(self, labels_or_annotator, box_threshold=0.20, text_threshold=0.20, sample_fps=0):
+        if isinstance(labels_or_annotator, ImageAnnotator):
+            self.image_annotator = labels_or_annotator
+        else:
+            self.image_annotator = ImageAnnotator(labels_or_annotator, box_threshold, text_threshold)
+        
         self.labels = self.image_annotator.labels
         self.sample_fps = float(sample_fps)
 
