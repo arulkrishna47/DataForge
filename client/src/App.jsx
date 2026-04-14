@@ -19,6 +19,7 @@ import AutoAnnotate from './pages/AutoAnnotate';
 
 // Service Pages
 import VideoToFrames from './pages/services/VideoToFrames';
+import DatasetSearch from './pages/services/DatasetSearch';
 import ComingSoon from './pages/services/ComingSoon';
 
 import AdminLayout from './layouts/AdminLayout';
@@ -56,7 +57,7 @@ function App() {
             
             {/* Direct Service Tools (Protected but outside dashboard sidebar) */}
             <Route path="/services/video-to-frames" element={<VideoToFrames />} />
-            <Route path="/services/dataset-collection" element={<ComingSoon title="Dataset Collection" />} />
+            <Route path="/services/dataset-collection" element={<DatasetSearch />} />
             <Route path="/services/ml-training" element={<ComingSoon title="ML Model Training" />} />
             <Route path="/services/ai-safety" element={<ComingSoon title="AI Safety & Bias" />} />
             <Route path="/services/neural-api" element={<ComingSoon title="Neural API" />} />
