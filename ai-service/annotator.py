@@ -46,11 +46,12 @@ class ImageAnnotator:
         self.grounding_model = load_model(config_path, checkpoint_path)
         self.grounding_model = self.grounding_model.to(self.device)
         
-        print("Loading MobileSAM...")
-        sam_path = self._find_file("mobile_sam.pt")
-        self.sam_model = SAM(sam_path)
-        self.sam_model.to(self.device)
-        print("All models ready!")
+        # Optimization: SAM is heavy and unused in the current bounding-box flow.
+        # Commenting out to save VRAM and massive initialization time.
+        # sam_path = self._find_file("mobile_sam.pt")
+        # self.sam_model = SAM(sam_path)
+        # self.sam_model.to(self.device)
+        print("Model Brain ready (Optimized)!")
 
     def _find_file(self, relative_path: str) -> str:
         paths = [
@@ -89,16 +90,36 @@ class ImageAnnotator:
         return boxes, logits, phrases
 
     def _detect_from_array(self, image_bgr):
-        import uuid
-        # Use unique temp path to prevent parallel processing clashes
-        temp_path = f"temp_detect_{uuid.uuid4().hex[:8]}.jpg"
-        try:
-            cv2.imwrite(temp_path, image_bgr)
-            boxes, logits, phrases = self._detect_objects(temp_path, image_bgr)
-            return boxes, logits, phrases
-        finally:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
+        if not self.labels:
+            raise ValueError("No labels to detect")
+        
+        # Build prompt safely
+        clean_labels = [str(l).strip() for l in self.labels if str(l).strip()]
+        text_prompt = " . ".join(clean_labels) + " ."
+        
+        # Fast In-Memory Transform: BGR -> RGB -> Tensor
+        image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+        image_pil = Image.fromarray(image_rgb)
+        
+        # We reuse the internal GroundingDINO transform logic but without the disk-read
+        transform = T.Compose([
+            T.RandomResize([800], max_size=1333),
+            T.ToTensor(),
+            T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+        ])
+        image_tensor, _ = transform(image_pil, None)
+        image_tensor = image_tensor.to(self.device)
+        
+        # Detection
+        boxes, logits, phrases = predict(
+            model=self.grounding_model,
+            image=image_tensor,
+            caption=text_prompt,
+            box_threshold=self.box_threshold,
+            text_threshold=self.text_threshold,
+            device=self.device
+        )
+        return boxes, logits, phrases
 
     def _process_detections(self, image_bgr, detections, output_dir, image_name):
         boxes_norm, logits, phrases = detections
@@ -348,10 +369,10 @@ class VideoAnnotator:
 
         if self.sample_fps > 0: sample_fps = self.sample_fps
         else:
-            # Optimized Auto-Smart: Don't process every frame even for short clips
-            if duration < 60: sample_fps = 5  # 5 FPS is plenty for most motion
-            elif duration < 300: sample_fps = 2
-            else: sample_fps = 1
+            # Optimized Auto-Smart: Lower FPS for massive speedup
+            if duration < 60: sample_fps = 2  # 2 FPS is plenty for high-speed annotation
+            elif duration < 300: sample_fps = 1
+            else: sample_fps = 0.5 # 1 frame every 2 seconds for long vids
         
         frame_interval = max(1, int(fps / sample_fps))
         all_results, saved_frames, curr = [], [], 0
