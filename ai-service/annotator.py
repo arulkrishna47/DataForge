@@ -276,7 +276,7 @@ class VideoAnnotator:
         self.labels = self.image_annotator.labels
         self.sample_fps = float(sample_fps)
 
-    def annotate_video(self, video_path: str, output_dir: str, export_format: str = "yolo") -> dict:
+    def annotate_video(self, video_path: str, output_dir: str, export_format: str = "yolo", progress_callback=None) -> dict:
         video_name = Path(video_path).stem
         cap = cv2.VideoCapture(video_path)
         fps = cap.get(cv2.CAP_PROP_FPS) or 25
@@ -307,8 +307,14 @@ class VideoAnnotator:
         cap.release()
 
         all_results = []
+        total_saved = len(saved_frames)
         for i, fp in enumerate(saved_frames):
             all_results.append(self.image_annotator.annotate_image(fp, output_dir, export_format))
+            if progress_callback and total_saved > 0:
+                # Video processing takes 90% of the single-file progress
+                progress_callback(int((i / total_saved) * 90))
+        
+        if progress_callback: progress_callback(95) # Finishing touches
         
         annotated_video_path = self._build_output_video(saved_frames, output_dir, video_name, fps, w, h)
         timeline = self._build_timeline(all_results, saved_frames, fps)

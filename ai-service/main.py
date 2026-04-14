@@ -171,19 +171,20 @@ async def run_annotation_job(job_id, file_paths, labels, export_format, box_th, 
     video_extensions = {'.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv'}
     image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.webp', '.tiff'}
     
-    # Filter files
+    # Filter and robustly extract
     all_files = []
     for fp in file_paths:
-      ext = Path(fp).suffix.lower()
-      if ext == '.zip':
-        extract_dir = Path(fp).parent / "extracted"
+      p = Path(fp)
+      if p.suffix.lower() == '.zip':
+        extract_dir = p.parent / "extracted"
         extract_dir.mkdir(exist_ok=True)
         with zipfile.ZipFile(fp, 'r') as z:
           z.extractall(extract_dir)
+        # Deep recursive search for images/videos
         for f in extract_dir.rglob("*"):
-          if f.suffix.lower() in image_extensions or f.suffix.lower() in video_extensions:
+          if f.is_file() and f.suffix.lower() in (image_extensions | video_extensions):
             all_files.append(str(f))
-      else:
+      elif p.suffix.lower() in (image_extensions | video_extensions):
         all_files.append(fp)
 
     total = len(all_files)
@@ -197,7 +198,17 @@ async def run_annotation_job(job_id, file_paths, labels, export_format, box_th, 
       await sio.emit("job_progress", {"job_id": job_id, "progress": jobs[job_id]["progress"], "message": msg})
       
       if ext in video_extensions:
-        res = video_engine.annotate_video(fp, str(output_dir), export_format)
+        # Define progress callback for this specific video
+        def on_vid_progress(p):
+            # Calculate overall job progress
+            current_unit_progress = int((i / total) * 95)
+            frame_progress = int((p / 100) * (95 / total))
+            global_progress = current_unit_progress + frame_progress
+            jobs[job_id]["progress"] = global_progress
+            # Note: Socket emit is handled by the main loop or polling for simplicity here
+            # but updating the dict ensures the next poll sees it immediately.
+
+        res = video_engine.annotate_video(fp, str(output_dir), export_format, progress_callback=on_vid_progress)
       else:
         res = image_engine.annotate_image(fp, str(output_dir), export_format)
         
@@ -227,26 +238,15 @@ async def run_annotation_job(job_id, file_paths, labels, export_format, box_th, 
     import traceback
     tb = traceback.format_exc()
     print(f"[CRITICAL ERROR] Job {job_id} failed: {e}\n{tb}")
-    jobs[job_id].update({"status": "failed", "error": str(e), "message": f"Pipeline error: {str(e)}"})
-    await sio.emit("job_progress", {"job_id": job_id, "status": "failed", "error": str(e)})
-
-  except FileNotFoundError as e:
-    err_msg = f"Model file missing: {e}. Check weights/ folder."
-    jobs[job_id].update({"status": "failed", "error": err_msg})
-    await sio.emit("job_progress", {"job_id": job_id, "status": "failed", "error": err_msg})
-  except AttributeError as e:
-    err_msg = f"Model API error: {e}. GroundingDINO version mismatch."
-    jobs[job_id].update({"status": "failed", "error": err_msg})
-    await sio.emit("job_progress", {"job_id": job_id, "status": "failed", "error": err_msg})
-  except Exception as e:
-    print(f"[CRITICAL ERROR] Job {job_id} failed: {e}")
-    jobs[job_id].update({"status": "failed", "error": str(e)})
+    jobs[job_id].update({"status": "failed", "error": str(e), "message": f"Pipeline error: {str(e)}", "progress": 0})
     await sio.emit("job_progress", {"job_id": job_id, "status": "failed", "error": str(e)})
   finally:
     # Cleanup uploads
     job_upload_dir = UPLOAD_DIR / job_id
     if job_upload_dir.exists():
-        shutil.rmtree(job_upload_dir)
+        try:
+            shutil.rmtree(job_upload_dir)
+        except: pass
 
 if __name__ == "__main__":
   # Use port 7860 for Hugging Face compatibility
