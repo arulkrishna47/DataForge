@@ -108,9 +108,14 @@ async def get_preview(job_id: str, filename: str):
 async def run_annotation_job(job_id, file_paths, labels, export_format, box_th, text_th):
   try:
     jobs[job_id]["status"] = "processing"
+    jobs[job_id]["message"] = "Waking up AI Brain... (may take 2 mins)"
+    await sio.emit("job_progress", {"job_id": job_id, "progress": 0, "message": jobs[job_id]["message"]})
     
     # Lazy load the models only when needed
     image_engine, video_engine = get_engine()
+    
+    jobs[job_id]["message"] = "AI Brain Online. Starting Analysis..."
+    await sio.emit("job_progress", {"job_id": job_id, "progress": 5, "message": jobs[job_id]["message"]})
     
     # Update engine parameters for THIS specific job
     image_engine.labels = labels
@@ -125,6 +130,7 @@ async def run_annotation_job(job_id, file_paths, labels, export_format, box_th, 
     for i, fp in enumerate(file_paths):
       ext = Path(fp).suffix.lower()
       msg = f"Analyzing {Path(fp).name} ({i+1}/{len(file_paths)})"
+      jobs[job_id]["message"] = msg
       
       await sio.emit("job_progress", {"job_id": job_id, "progress": jobs[job_id]["progress"], "message": msg})
       
