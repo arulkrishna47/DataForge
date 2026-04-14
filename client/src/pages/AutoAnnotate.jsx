@@ -103,7 +103,7 @@ export default function AutoAnnotate() {
 
       console.log('Starting job with labels:', labelStr)
 
-      const { data } = await api.post('/annotate', formData, { 
+      const { data } = await api.post('/annotate/start', formData, { 
         headers: { 'Content-Type': 'multipart/form-data' },
         timeout: 0 
       })
