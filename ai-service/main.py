@@ -54,8 +54,9 @@ async def start_annotation(
   files: List[UploadFile] = File(...),
   labels: str = Form(...),
   export_format: str = Form("yolo"),
-  box_threshold: float = Form(0.35),
-  text_threshold: float = Form(0.25),
+  box_threshold: float = Form(0.20),
+  text_threshold: float = Form(0.20),
+  sample_fps: float = Form(0.0),
   job_id: str = Form(None),
 ):
   job_id = job_id or str(uuid.uuid4())
@@ -82,7 +83,7 @@ async def start_annotation(
 
   background_tasks.add_task(
     run_annotation_job,
-    job_id, saved_files, label_list, export_format, box_threshold, text_threshold
+    job_id, saved_files, label_list, export_format, box_threshold, text_threshold, sample_fps
   )
 
   return {"job_id": job_id, "status": "queued", "total_files": len(saved_files)}
@@ -105,7 +106,7 @@ async def get_preview(job_id: str, filename: str):
     return {"error": "File not found"}
   return FileResponse(str(path))
 
-async def run_annotation_job(job_id, file_paths, labels, export_format, box_th, text_th):
+async def run_annotation_job(job_id, file_paths, labels, export_format, box_th, text_th, sample_fps):
   try:
     jobs[job_id]["status"] = "processing"
     jobs[job_id]["message"] = "Waking up AI Brain... (may take 2 mins)"
@@ -121,6 +122,9 @@ async def run_annotation_job(job_id, file_paths, labels, export_format, box_th, 
     image_engine.labels = labels
     image_engine.box_threshold = box_th
     image_engine.text_threshold = text_th
+    video_engine.image_annotator.box_threshold = box_th
+    video_engine.image_annotator.text_threshold = text_th
+    video_engine.sample_fps = sample_fps
     
     output_dir = OUTPUT_DIR / job_id
     output_dir.mkdir(exist_ok=True)
@@ -154,6 +158,14 @@ async def run_annotation_job(job_id, file_paths, labels, export_format, box_th, 
     jobs[job_id].update({"status": "completed", "progress": 100})
     await sio.emit("job_progress", {"job_id": job_id, "status": "completed", "progress": 100})
 
+  except FileNotFoundError as e:
+    err_msg = f"Model file missing: {e}. Check weights/ folder."
+    jobs[job_id].update({"status": "failed", "error": err_msg})
+    await sio.emit("job_progress", {"job_id": job_id, "status": "failed", "error": err_msg})
+  except AttributeError as e:
+    err_msg = f"Model API error: {e}. GroundingDINO version mismatch."
+    jobs[job_id].update({"status": "failed", "error": err_msg})
+    await sio.emit("job_progress", {"job_id": job_id, "status": "failed", "error": err_msg})
   except Exception as e:
     print(f"[CRITICAL ERROR] Job {job_id} failed: {e}")
     jobs[job_id].update({"status": "failed", "error": str(e)})

@@ -2,184 +2,312 @@ import os
 import cv2
 import torch
 import numpy as np
+import json
 from pathlib import Path
 from PIL import Image
 from ultralytics import SAM
-import json
-import xml.etree.ElementTree as ET
-from groundingdino.util.inference import Model, load_image, predict, annotate
+from groundingdino.util.inference import load_model, load_image, predict
 import groundingdino.datasets.transforms as T
-
-# Manual Box Conversion (cxcywh -> xyxy)
-def cxcywh_to_xyxy(boxes_cxcywh, w, h):
-    # Scale normalized to absolute
-    boxes_scaled = boxes_cxcywh * torch.Tensor([w, h, w, h])
-    boxes_xyxy = torch.zeros_like(boxes_scaled)
-    boxes_xyxy[:, 0] = boxes_scaled[:, 0] - boxes_scaled[:, 2] / 2 # x1
-    boxes_xyxy[:, 1] = boxes_scaled[:, 1] - boxes_scaled[:, 3] / 2 # y1
-    boxes_xyxy[:, 2] = boxes_scaled[:, 0] + boxes_scaled[:, 2] / 2 # x2
-    boxes_xyxy[:, 3] = boxes_scaled[:, 1] + boxes_scaled[:, 3] / 2 # y2
-    return boxes_xyxy.numpy()
+import torchvision.ops as ops
 
 class ImageAnnotator:
-  def __init__(self, labels: list[str], box_threshold: float = 0.3, text_threshold: float = 0.25):
-    self.labels = labels
-    self.box_threshold = box_threshold
-    self.text_threshold = text_threshold
-    self.device = "cuda" if torch.cuda.is_available() else "cpu"
-    
-    config_path = "weights/groundingdino_swint_ogc.cfg.py"
-    checkpoint_path = "weights/groundingdino_swint_ogc.pth"
-    
-    # Handle both local and relative paths
-    if not os.path.exists(config_path):
-        config_path = os.path.join("ai-service", config_path)
-        checkpoint_path = os.path.join("ai-service", checkpoint_path)
-
-    print(f"[DEBUG] Initializing GroundingDINO on {self.device}...")
-    self.model = Model(
-        model_config_path=config_path, 
-        model_checkpoint_path=checkpoint_path, 
-        device=self.device
-    )
-
-    print(f"[DEBUG] Loading MobileSAM...")
-    sam_path = "mobile_sam.pt"
-    if not os.path.exists(sam_path):
-        sam_path = os.path.join("ai-service", sam_path)
-    self.sam_model = SAM(sam_path)
-    self.sam_model.to(self.device)
-
-  def annotate_image(self, image_path: str, output_dir: str, export_format: str = "yolo") -> dict:
-    try:
-        image_name = Path(image_path).stem if isinstance(image_path, str) else f"frame_{np.random.randint(1000, 9999)}"
-        image_source = cv2.imread(image_path) if isinstance(image_path, str) else image_path
-
-        if image_source is None:
-            return {"error": "Could not read image source"}
+    def __init__(self, labels: list[str], box_threshold: float = 0.20, text_threshold: float = 0.20):
+        self.labels = labels
+        self.box_threshold = box_threshold
+        self.text_threshold = text_threshold
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
         
-        h_orig, w_orig = image_source.shape[:2]
+        config_path = self._find_file("weights/groundingdino_swint_ogc.cfg.py")
+        checkpoint_path = self._find_file("weights/groundingdino_swint_ogc.pth")
         
-        # 1. Prediction using the high-level Model.predict (Handles scaling automatically)
-        # We combine labels into one prompt
-        text_prompt = ", ".join(self.labels)
+        print(f"Loading GroundingDINO on {self.device}...")
+        self.grounding_model = load_model(config_path, checkpoint_path)
+        self.grounding_model = self.grounding_model.to(self.device)
         
-        # Model.predict expects a BGR image (standard for cv2)
-        boxes, logits, phrases = self.model.predict(
-            image=image_source,
+        print("Loading MobileSAM...")
+        sam_path = self._find_file("mobile_sam.pt")
+        self.sam_model = SAM(sam_path)
+        self.sam_model.to(self.device)
+        print("All models ready!")
+
+    def _find_file(self, relative_path: str) -> str:
+        paths = [
+            relative_path,
+            os.path.join("ai-service", relative_path),
+            os.path.join(os.path.dirname(__file__), relative_path),
+            os.path.join(os.path.dirname(__file__), "..", relative_path),
+        ]
+        for p in paths:
+            if os.path.exists(p):
+                return p
+        raise FileNotFoundError(f"Cannot find {relative_path}. Searched: {paths}")
+
+    def _detect_objects(self, image_path, image_bgr):
+        # Load image in GroundingDINO format
+        _, image_tensor = load_image(image_path)
+        image_tensor = image_tensor.to(self.device)
+        
+        # Build text prompt — each label separated by " . "
+        text_prompt = " . ".join(self.labels) + " ."
+        
+        # Lower thresholds to catch more objects
+        boxes, logits, phrases = predict(
+            model=self.grounding_model,
+            image=image_tensor,
             caption=text_prompt,
             box_threshold=self.box_threshold,
-            text_threshold=self.text_threshold
+            text_threshold=self.text_threshold,
+            device=self.device
         )
+        return boxes, logits, phrases
 
+    def _boxes_to_xyxy(self, boxes, img_w, img_h):
         if len(boxes) == 0:
-            return {"file": image_path if isinstance(image_path, str) else "video", "detections": 0, "message": "No objects detected"}
-
-        # 2. Convert normalized cxcywh to absolute xyxy
-        final_boxes = cxcywh_to_xyxy(boxes, w_orig, h_orig)
-        final_conf = logits.numpy()
+            return np.array([])
         
-        # Map phrases back to class IDs
-        final_cids = []
-        for p in phrases:
-            found_id = 0
-            for idx, label in enumerate(self.labels):
-                if label.lower() in p.lower():
-                    found_id = idx
-                    break
-            final_cids.append(found_id)
-        final_cids = np.array(final_cids)
+        boxes_np = boxes.cpu().numpy()
+        xyxy = []
+        for box in boxes_np:
+            cx, cy, w, h = box
+            x1 = (cx - w/2) * img_w
+            y1 = (cy - h/2) * img_h
+            x2 = (cx + w/2) * img_w
+            y2 = (cy + h/2) * img_h
+            
+            # Clip to image boundaries
+            x1 = max(0, min(x1, img_w))
+            y1 = max(0, min(y1, img_h))
+            x2 = max(0, min(x2, img_w))
+            y2 = max(0, min(y2, img_h))
+            
+            # Skip tiny boxes (noise)
+            if (x2 - x1) > 5 and (y2 - y1) > 5:
+                xyxy.append([x1, y1, x2, y2])
+        return np.array(xyxy)
 
-        # 3. SAM Segmentation for 100% boundary accuracy
-        image_rgb = cv2.cvtColor(image_source, cv2.COLOR_BGR2RGB)
-        sam_results = self.sam_model(image_rgb, bboxes=final_boxes, verbose=False)
+    def _apply_nms(self, boxes_xyxy, scores, iou_threshold=0.5):
+        if len(boxes_xyxy) == 0:
+            return boxes_xyxy, scores, list(range(len(boxes_xyxy)))
+        
+        boxes_t = torch.tensor(boxes_xyxy, dtype=torch.float32)
+        scores_t = torch.tensor(scores, dtype=torch.float32)
+        
+        keep = ops.nms(boxes_t, scores_t, iou_threshold).numpy()
+        return boxes_xyxy[keep], scores[keep], keep
+
+    def _phrase_to_label_idx(self, phrase: str) -> int:
+        phrase_lower = phrase.lower().strip()
+        for i, label in enumerate(self.labels):
+            if label.lower() == phrase_lower: return i
+        for i, label in enumerate(self.labels):
+            if label.lower() in phrase_lower: return i
+        for i, label in enumerate(self.labels):
+            if phrase_lower in label.lower(): return i
+        return 0
+
+    def annotate_image(self, image_path: str, output_dir: str, export_format: str = "yolo") -> dict:
+        image_name = Path(image_path).stem
+        image_bgr = cv2.imread(image_path)
+        if image_bgr is None: return {"file": image_path, "error": "Cannot read image"}
+        
+        h_orig, w_orig = image_bgr.shape[:2]
+        image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+        
+        boxes_norm, logits, phrases = self._detect_objects(image_path, image_bgr)
+        
+        if len(boxes_norm) == 0:
+            return {"file": image_path, "detections": 0, "message": "No objects detected"}
+        
+        boxes_xyxy = self._boxes_to_xyxy(boxes_norm, w_orig, h_orig)
+        scores = logits.cpu().numpy()
+        
+        if len(boxes_xyxy) == 0: return {"file": image_path, "detections": 0, "message": "Noise filtered"}
+        
+        boxes_xyxy, scores, keep_idx = self._apply_nms(boxes_xyxy, scores, iou_threshold=0.45)
+        phrases = [phrases[i] for i in keep_idx]
+        class_ids = np.array([self._phrase_to_label_idx(p) for p in phrases])
         
         masks = None
-        if sam_results[0].masks is not None:
-            masks = sam_results[0].masks.data.cpu().numpy()
-            # If masks are smaller than original, resize them
-            if masks.shape[1:] != (h_orig, w_orig):
-                resized_masks = []
-                for m in masks:
-                    resized_masks.append(cv2.resize(m, (w_orig, h_orig), interpolation=cv2.INTER_LINEAR) > 0.5)
-                masks = np.array(resized_masks)
+        try:
+            sam_results = self.sam_model(image_path, bboxes=boxes_xyxy, verbose=False)
+            if sam_results and sam_results[0].masks is not None:
+                mask_data = sam_results[0].masks.data
+                resized = []
+                for m in mask_data.cpu().numpy():
+                    r = cv2.resize(m.astype(np.float32), (w_orig, h_orig), interpolation=cv2.INTER_LINEAR)
+                    resized.append(r > 0.5)
+                masks = np.array(resized)
+        except Exception as e:
+            print(f"SAM warning: {e}")
 
-        # 4. Rendering and Export
-        final_phrases = [self.labels[cid] for cid in final_cids]
-        annotated = self._draw_annotations(image_rgb, final_boxes, final_cids, final_conf, final_phrases, masks)
-
+        annotated = self._draw_annotations(image_rgb, boxes_xyxy, class_ids, scores, phrases, masks)
         out_path = Path(output_dir)
-        out_path.mkdir(exist_ok=True, parents=True)
-        preview_filename = f"{image_name}_annotated.jpg"
-        preview_path = out_path / "previews" / preview_filename
-        preview_path.parent.mkdir(exist_ok=True, parents=True)
+        preview_dir = out_path / "previews"
+        preview_dir.mkdir(parents=True, exist_ok=True)
+        preview_path = preview_dir / f"{image_name}_annotated.jpg"
         cv2.imwrite(str(preview_path), cv2.cvtColor(annotated, cv2.COLOR_RGB2BGR))
+        
+        with open(out_path / "classes.txt", "w") as f: f.write("\n".join(self.labels))
+        
+        fmt = export_format.lower()
+        if fmt == "yolo":
+            self._export_yolo(image_name, boxes_xyxy, class_ids, w_orig, h_orig, out_path)
+        elif fmt == "coco":
+            self._export_coco(image_name, image_path, boxes_xyxy, class_ids, scores, masks, w_orig, h_orig, out_path)
+        elif fmt == "voc":
+            self._export_voc(image_name, image_path, boxes_xyxy, phrases, w_orig, h_orig, out_path)
+        
+        return {"file": image_path, "detections": len(boxes_xyxy), "labels_found": list(set(phrases)), "preview": str(preview_path)}
 
-        if export_format.lower() == "yolo":
-          self._export_yolo(image_name, final_boxes, final_cids, w_orig, h_orig, out_path)
+    def _export_coco(self, name, path, boxes, class_ids, scores, masks, w, h, out_dir):
+        (out_dir / "coco").mkdir(exist_ok=True, parents=True)
+        coco_file = out_dir / "coco" / "annotations.json"
+        
+        data = {"images": [], "annotations": [], "categories": []}
+        if coco_file.exists():
+            with open(coco_file, "r") as f: data = json.load(f)
+        
+        img_id = len(data["images"]) + 1
+        data["images"].append({"id": img_id, "file_name": Path(path).name, "width": w, "height": h})
+        
+        if not data["categories"]:
+            for i, label in enumerate(self.labels):
+                data["categories"].append({"id": i, "name": label, "supercategory": "none"})
+        
+        for i, (box, cid, score) in enumerate(zip(boxes, class_ids, scores)):
+            bw, bh = box[2]-box[0], box[3]-box[1]
+            ann = {
+                "id": len(data["annotations"]) + 1,
+                "image_id": img_id,
+                "category_id": int(cid),
+                "bbox": [float(box[0]), float(box[1]), float(bw), float(bh)],
+                "area": float(bw * bh),
+                "segmentation": [],
+                "iscrowd": 0,
+                "score": float(score)
+            }
+            data["annotations"].append(ann)
+            
+        with open(coco_file, "w") as f: json.dump(data, f, indent=2)
 
-        return {
-          "file": image_path if isinstance(image_path, str) else "frame",
-          "detections": len(final_boxes),
-          "preview": f"/dashboard/auto-preview?path={str(preview_path)}"
-        }
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return {"error": f"AI Brain Error: {str(e)}"}
+    def _export_voc(self, name, path, boxes, phrases, w, h, out_dir):
+        (out_dir / "voc").mkdir(exist_ok=True, parents=True)
+        from xml.etree.ElementTree import Element, SubElement, tostring
+        from xml.dom import minidom
+        
+        top = Element('annotation')
+        SubElement(top, 'filename').text = Path(path).name
+        size = SubElement(top, 'size')
+        SubElement(size, 'width').text = str(w); SubElement(size, 'height').text = str(h); SubElement(size, 'depth').text = '3'
+        
+        for box, phrase in zip(boxes, phrases):
+            obj = SubElement(top, 'object')
+            SubElement(obj, 'name').text = phrase
+            SubElement(obj, 'pose').text = 'Unspecified'; SubElement(obj, 'truncated').text = '0'; SubElement(obj, 'difficult').text = '0'
+            bbox = SubElement(obj, 'bndbox')
+            SubElement(bbox, 'xmin').text = str(int(box[0])); SubElement(bbox, 'ymin').text = str(int(box[1]))
+            SubElement(bbox, 'xmax').text = str(int(box[2])); SubElement(bbox, 'ymax').text = str(int(box[3]))
+            
+        xml_str = minidom.parseString(tostring(top)).toprettyxml(indent="   ")
+        with open(out_dir / "voc" / f"{name}.xml", "w") as f: f.write(xml_str)
 
-  def _draw_annotations(self, image, boxes, class_ids, confidences, phrases, masks=None):
-    annotated = image.copy()
-    COLORS = [(0, 255, 255), (255, 0, 255), (255, 255, 0), (0, 255, 0), (255, 0, 0), (0, 0, 255)]
-    
-    if masks is not None:
-        for i, mask in enumerate(masks):
+    def _draw_annotations(self, image, boxes, class_ids, confidences, phrases, masks=None):
+        annotated = image.copy()
+        COLORS = [(0, 255, 255), (255, 0, 255), (255, 255, 0), (0, 255, 0), (255, 0, 0), (0, 0, 255)]
+        if masks is not None:
+            for i, mask in enumerate(masks):
+                color = COLORS[int(class_ids[i]) % len(COLORS)]
+                overlay = np.zeros_like(annotated)
+                overlay[mask.astype(bool)] = color
+                annotated = cv2.addWeighted(annotated, 1.0, overlay, 0.4, 0)
+        for i, box in enumerate(boxes):
+            x1, y1, x2, y2 = map(int, box)
             color = COLORS[int(class_ids[i]) % len(COLORS)]
-            mask_overlay = np.zeros_like(annotated)
-            mask_overlay[mask.astype(bool)] = color
-            annotated = cv2.addWeighted(annotated, 1.0, mask_overlay, 0.4, 0)
+            label = f"{self.labels[class_ids[i]]} {confidences[i]:.2f}"
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+            cv2.rectangle(annotated, (x1, y1 - th - 10), (x1 + tw + 10, y1), color, -1)
+            cv2.putText(annotated, label, (x1 + 5, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+        return annotated
 
-    for i, box in enumerate(boxes):
-        x1, y1, x2, y2 = map(int, box)
-        color = COLORS[int(class_ids[i]) % len(COLORS)]
-        label = f"{phrases[i]} {confidences[i]:.2f}"
-        cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
-        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-        cv2.rectangle(annotated, (x1, y1 - th - 10), (x1 + tw + 10, y1), color, -1)
-        cv2.putText(annotated, label, (x1 + 5, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
-        
-    return annotated
-
-  def _export_yolo(self, name, boxes, class_ids, w, h, out_dir):
-    Path(out_dir / "labels").mkdir(exist_ok=True, parents=True)
-    lines = []
-    for b, cid in zip(boxes, class_ids):
-        # YOLO: class x_center y_center width height (all normalized)
-        xc = ((b[0] + b[2]) / 2) / w
-        yc = ((b[1] + b[3]) / 2) / h
-        bw = (b[2] - b[0]) / w
-        bh = (b[3] - b[1]) / h
-        lines.append(f"{int(cid)} {xc:.6f} {yc:.6f} {bw:.6f} {bh:.6f}")
-        
-    with open(out_dir / "labels" / f"{name}.txt", "w") as f:
-        f.write("\n".join(lines))
+    def _export_yolo(self, name, boxes, class_ids, w, h, out_dir):
+        (out_dir / "labels").mkdir(exist_ok=True, parents=True)
+        lines = []
+        for b, cid in zip(boxes, class_ids):
+            xc, yc = ((b[0]+b[2])/2)/w, ((b[1]+b[3])/2)/h
+            bw, bh = (b[2]-b[0])/w, (b[3]-b[1])/h
+            lines.append(f"{int(cid)} {xc:.6f} {yc:.6f} {bw:.6f} {bh:.6f}")
+        with open(out_dir / "labels" / f"{name}.txt", "w") as f: f.write("\n".join(lines))
 
 class VideoAnnotator:
-  def __init__(self, image_annotator: ImageAnnotator):
-    self.image_annotator = image_annotator
+    def __init__(self, labels, box_threshold=0.20, text_threshold=0.20, sample_fps=0):
+        self.labels = labels
+        self.sample_fps = sample_fps
+        self.image_annotator = ImageAnnotator(labels, box_threshold, text_threshold)
 
-  def annotate_video(self, video_path: str, output_dir: str, export_format: str = "yolo") -> dict:
-    cap = cv2.VideoCapture(video_path)
-    fps = cap.get(cv2.CAP_PROP_FPS) or 24
-    frame_interval = max(1, int(fps // 2)) 
-    processed_count = 0
-    curr = 0
-    while True:
-      ret, frame = cap.read()
-      if not ret: break
-      if curr % frame_interval == 0:
-        res = self.image_annotator.annotate_image(frame, output_dir, export_format)
-        if "error" not in res: processed_count += 1
-      curr += 1
-    cap.release()
-    return {"file": video_path, "detections": processed_count, "fps": fps}
+    def annotate_video(self, video_path: str, output_dir: str, export_format: str = "yolo") -> dict:
+        video_name = Path(video_path).stem
+        cap = cv2.VideoCapture(video_path)
+        fps = cap.get(cv2.CAP_PROP_FPS) or 25
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        duration = total_frames / fps
+        
+        frames_dir = Path(output_dir) / "frames" / video_name
+        frames_dir.mkdir(parents=True, exist_ok=True)
+
+        if self.sample_fps > 0: sample_fps = self.sample_fps
+        else:
+            if duration < 30: sample_fps = fps
+            elif duration < 120: sample_fps = 5
+            elif duration < 600: sample_fps = 2
+            else: sample_fps = 1
+        
+        frame_interval = max(1, int(fps / sample_fps))
+        saved_frames, curr = [], 0
+        while True:
+            ret, frame = cap.read()
+            if not ret: break
+            if curr % frame_interval == 0:
+                f_path = frames_dir / f"frame_{curr:06d}.jpg"
+                cv2.imwrite(str(f_path), frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
+                saved_frames.append(str(f_path))
+            curr += 1
+        cap.release()
+
+        all_results = []
+        for i, fp in enumerate(saved_frames):
+            all_results.append(self.image_annotator.annotate_image(fp, output_dir, export_format))
+        
+        annotated_video_path = self._build_output_video(saved_frames, output_dir, video_name, fps, w, h)
+        timeline = self._build_timeline(all_results, saved_frames, fps)
+        with open(Path(output_dir) / f"{video_name}_timeline.json", "w") as f: json.dump(timeline, f, indent=2)
+        
+        return {
+            "file": video_path, "frames_processed": len(saved_frames), "total_detections": sum(r.get("detections", 0) for r in all_results),
+            "annotated_video": str(annotated_video_path), "timeline": str(Path(output_dir) / f"{video_name}_timeline.json")
+        }
+
+    def _build_output_video(self, frame_paths, output_dir, video_name, fps, w, h):
+        out_path = str(Path(output_dir) / f"{video_name}_annotated.mp4")
+        writer = cv2.VideoWriter(out_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
+        for fp in frame_paths:
+            prev = Path(output_dir) / "previews" / (Path(fp).stem + "_annotated.jpg")
+            frame = cv2.imread(str(prev)) if prev.exists() else cv2.imread(fp)
+            if frame is not None:
+                if frame.shape[1] != w or frame.shape[0] != h: frame = cv2.resize(frame, (w, h))
+                writer.write(frame)
+        writer.release()
+        return out_path
+
+    def _build_timeline(self, results, frame_paths, fps):
+        timeline = {"fps": fps, "frames": []}
+        for r, fp in zip(results, frame_paths):
+            f_num = int(Path(fp).stem.replace("frame_", ""))
+            ts = f_num / fps
+            timeline["frames"].append({
+                "frame_number": f_num, "timestamp_seconds": round(ts, 3),
+                "timestamp_formatted": f"{int(ts//60):02d}:{ts%60:05.2f}",
+                "detections": r.get("detections", 0), "labels_found": r.get("labels_found", [])
+            })
+        return timeline
