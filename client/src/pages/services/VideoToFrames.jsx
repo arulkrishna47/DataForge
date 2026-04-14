@@ -55,39 +55,26 @@ const VideoToFrames = () => {
 
   const handleFileUpload = async (e) => {
     const rawFiles = Array.from(e.target.files);
-    const videoFiles = [];
-    
+    const queueItems = [];
     setIsPreparing(true);
     cancelRef.current = false;
-    setTotalProgress(0);
-
     for (const file of rawFiles) {
       if (cancelRef.current) break;
-
       if (file.type.startsWith('video/')) {
-        videoFiles.push(file);
+        queueItems.push({ id: Math.random().toString(36).substr(2, 9), file, name: file.name, url: URL.createObjectURL(file), metadata: null, progress: 0, status: 'pending' });
       } else if (file.name.endsWith('.zip') || file.type === 'application/zip') {
         try {
-          setStatusMessage(`Unzipping ${file.name}...`);
           const zip = new JSZip();
           const contents = await zip.loadAsync(file);
-          
-          for (const [path, zipEntry] of Object.entries(contents.files)) {
-            if (!zipEntry.dir && isVideoFile(path)) {
-              const content = await zipEntry.async('blob');
-              const videoFile = new File([content], path.split('/').pop(), { type: getMimeType(path) });
-              videoFiles.push(videoFile);
-            }
+          const entries = Object.entries(contents.files).filter(([p, z]) => !z.dir && isVideoFile(p));
+          for (const [path, zipEntry] of entries) {
+            queueItems.push({ id: Math.random().toString(36).substr(2, 9), zipEntry, name: path.split('/').pop(), url: null, metadata: null, progress: 0, status: 'pending' });
           }
-        } catch (err) {
-          console.error("Zip error:", err);
-        }
+        } catch (err) { console.error("Zip error:", err); }
       }
     }
-
-    addFilesToQueue(videoFiles);
-    setIsExtracting(false);
-    setStatusMessage('');
+    if (!cancelRef.current) setVideoQueue(prev => [...prev, ...queueItems]);
+    setIsPreparing(false);
   };
 
   const isVideoFile = (filename) => {
@@ -152,74 +139,47 @@ const VideoToFrames = () => {
 
     for (let i = 0; i < videoQueue.length; i++) {
       if (cancelRef.current) break;
-      
       setCurrentVideoIndex(i);
-      const currentVideo = videoQueue[i];
-      setVideoQueue(prev => prev.map((v, idx) => idx === i ? { ...v, status: 'processing' } : v));
-
-      const video = videoRef.current;
-      video.src = currentVideo.url;
-      
-      await new Promise(r => {
-        video.onloadedmetadata = () => r();
-      });
-
-      const canvas = canvasRef.current;
-      const ctx = canvas.getContext('2d');
-      
-      let targetWidth = video.videoWidth;
-      let targetHeight = video.videoHeight;
-
-      if (settings.resolution === '1080p') { targetWidth = 1920; targetHeight = 1080; }
-      else if (settings.resolution === '720p') { targetWidth = 1280; targetHeight = 720; }
-      else if (settings.resolution === '480p') { targetWidth = 854; targetHeight = 480; }
-      else if (settings.resolution === 'custom') {
-        targetWidth = parseInt(settings.customWidth) || video.videoWidth;
-        targetHeight = parseInt(settings.customHeight) || video.videoHeight;
+      let currentItem = videoQueue[i];
+      let tempUrl = currentItem.url;
+      if (currentItem.zipEntry) {
+        setStatusMessage(`Extracting ${currentItem.name}...`);
+        const blob = await currentItem.zipEntry.async('blob');
+        tempUrl = URL.createObjectURL(blob);
+        const tempVideo = document.createElement('video');
+        tempVideo.src = tempUrl;
+        await new Promise(r => tempVideo.onloadedmetadata = r);
+        currentItem.metadata = { duration: tempVideo.duration, width: tempVideo.videoWidth, height: tempVideo.videoHeight };
       }
-
-      canvas.width = targetWidth;
-      canvas.height = targetHeight;
-
-      const videoFrames = [];
-      const frameInterval = 1 / settings.fps;
-      const duration = video.duration;
+      if (!currentItem.metadata) continue;
+      const video = videoRef.current;
+      video.src = tempUrl;
+      const { duration } = currentItem.metadata;
+      const interval = 1 / settings.fps;
       let currentTime = 0;
-
       while (currentTime <= duration) {
         if (cancelRef.current) break;
-        
-        await new Promise((resolve) => {
+        await new Promise((r) => {
           video.currentTime = currentTime;
           video.onseeked = () => {
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            canvas.toBlob((blob) => {
+            canvasRef.current.width = settings.resolution === 'original' ? currentItem.metadata.width : (parseInt(settings.customWidth) || 1280);
+            canvasRef.current.height = settings.resolution === 'original' ? currentItem.metadata.height : (parseInt(settings.customHeight) || 720);
+            canvasRef.current.getContext('2d').drawImage(video, 0, 0, canvasRef.current.width, canvasRef.current.height);
+            canvasRef.current.toBlob((blob) => {
               if (blob) {
-                videoFrames.push(blob);
+                if (!allResults[currentItem.name]) allResults[currentItem.name] = [];
+                allResults[currentItem.name].push({ name: `${currentItem.name}_${totalCaptured}.${settings.format}`, blob, size: blob.size });
                 totalCaptured++;
-                
-                const vProg = (currentTime / duration) * 100;
-                setVideoQueue(prev => prev.map((v, idx) => idx === i ? { ...v, progress: Math.min(100, Math.round(vProg)) } : v));
-
-                const overallProg = ((i / videoQueue.length) + (vProg / 100 / videoQueue.length)) * 100;
-                setTotalProgress(Math.round(overallProg));
-
-                const elapsed = (Date.now() - startTimeStamp) / 1000;
-                const remaining = (elapsed / totalCaptured) * (estimate.count - totalCaptured);
-                setEta(remaining > 0 ? Math.ceil(remaining) + 's' : 'Wrapping up...');
-
-                if (totalCaptured % 10 === 0 || totalCaptured < 5) {
-                  setLiveThumbnails(prev => [...prev.slice(-7), URL.createObjectURL(blob)]);
-                }
+                setVideoQueue(prev => prev.map((v, idx) => idx === i ? { ...v, progress: Math.min(100, Math.round((currentTime / duration) * 100)), status: 'processing' } : v));
+                setLiveThumbnails(prev => [URL.createObjectURL(blob), ...prev].slice(0, 4));
               }
-              resolve();
+              r();
             }, `image/${settings.format === 'jpg' ? 'jpeg' : settings.format}`, settings.quality / 100);
           };
         });
-        currentTime += frameInterval;
+        currentTime += interval;
       }
-
-      allResults[currentVideo.name] = videoFrames;
+      if (currentItem.zipEntry) URL.revokeObjectURL(tempUrl);
       setVideoQueue(prev => prev.map((v, idx) => idx === i ? { ...v, status: 'completed', progress: 100 } : v));
     }
 
