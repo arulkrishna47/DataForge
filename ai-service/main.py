@@ -1,9 +1,13 @@
+import os
+# Force offline modes to prevent hangs on HuggingFace checks
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
+os.environ["HF_DATASETS_OFFLINE"] = "1"
+
 from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 import uvicorn
 import asyncio
-import os
 import uuid
 import zipfile
 import shutil
@@ -190,6 +194,8 @@ async def run_annotation_job(job_id, file_paths, labels, export_format, box_th, 
     total = len(all_files)
     jobs[job_id]["total"] = total
     
+    loop = asyncio.get_running_loop()
+    
     for i, fp in enumerate(all_files):
       ext = Path(fp).suffix.lower()
       fname = Path(fp).name
@@ -198,19 +204,27 @@ async def run_annotation_job(job_id, file_paths, labels, export_format, box_th, 
       await sio.emit("job_progress", {"job_id": job_id, "progress": jobs[job_id]["progress"], "message": msg})
       
       if ext in video_extensions:
-        # Define progress callback for this specific video
         def on_vid_progress(p):
-            # Calculate overall job progress
             current_unit_progress = int((i / total) * 95)
-            frame_progress = int((p / 100) * (95 / total))
-            global_progress = current_unit_progress + frame_progress
-            jobs[job_id]["progress"] = global_progress
-            # Note: Socket emit is handled by the main loop or polling for simplicity here
-            # but updating the dict ensures the next poll sees it immediately.
+            frame_progress = (p / 100.0) * (95.0 / total)
+            global_progress = int(current_unit_progress + frame_progress)
+            
+            if global_progress > jobs[job_id]["progress"]:
+                jobs[job_id]["progress"] = global_progress
+                # Send update back to main loop to emit
+                loop.call_soon_threadsafe(
+                    lambda: asyncio.create_task(sio.emit("job_progress", {
+                        "job_id": job_id, 
+                        "progress": global_progress, 
+                        "message": f"Analyzing {fname} ({global_progress}%)"
+                    }))
+                )
 
-        res = video_engine.annotate_video(fp, str(output_dir), export_format, progress_callback=on_vid_progress)
+        # Run blocking video process in thread
+        res = await loop.run_in_executor(None, video_engine.annotate_video, fp, str(output_dir), export_format, on_vid_progress)
       else:
-        res = image_engine.annotate_image(fp, str(output_dir), export_format)
+        # Run blocking image process in thread
+        res = await loop.run_in_executor(None, image_engine.annotate_image, fp, str(output_dir), export_format)
         
       if "error" in res:
         print(f"File error: {res['error']}")
