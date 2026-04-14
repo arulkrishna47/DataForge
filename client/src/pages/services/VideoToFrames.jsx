@@ -19,10 +19,12 @@ const VideoToFrames = () => {
   const [videoQueue, setVideoQueue] = useState([]); // [{ id, file, url, name, metadata, progress, status }]
   const [currentVideoIndex, setCurrentVideoIndex] = useState(-1);
   const [isExtracting, setIsExtracting] = useState(false);
-  const [isCancelled, setIsCancelled] = useState(false);
+  const [isPreparing, setIsPreparing] = useState(false);
+  const cancelRef = useRef(false);
   const [totalProgress, setTotalProgress] = useState(0);
   const [liveThumbnails, setLiveThumbnails] = useState([]);
   const [results, setResults] = useState(null); 
+  const [statusMessage, setStatusMessage] = useState('');
   const [eta, setEta] = useState('');
 
   // Settings
@@ -55,11 +57,13 @@ const VideoToFrames = () => {
     const rawFiles = Array.from(e.target.files);
     const videoFiles = [];
     
-    setIsExtracting(true); // Show loader while unzipping
+    setIsPreparing(true);
+    cancelRef.current = false;
     setTotalProgress(0);
-    setStatusMessage('Reading upload...');
 
     for (const file of rawFiles) {
+      if (cancelRef.current) break;
+
       if (file.type.startsWith('video/')) {
         videoFiles.push(file);
       } else if (file.name.endsWith('.zip') || file.type === 'application/zip') {
@@ -139,7 +143,7 @@ const VideoToFrames = () => {
 
   const extractFrames = async () => {
     setIsExtracting(true);
-    setIsCancelled(false);
+    cancelRef.current = false;
     setTotalProgress(0);
     setLiveThumbnails([]);
     const allResults = {};
@@ -147,7 +151,7 @@ const VideoToFrames = () => {
     const startTimeStamp = Date.now();
 
     for (let i = 0; i < videoQueue.length; i++) {
-      if (isCancelled) break;
+      if (cancelRef.current) break;
       
       setCurrentVideoIndex(i);
       const currentVideo = videoQueue[i];
@@ -183,7 +187,7 @@ const VideoToFrames = () => {
       let currentTime = 0;
 
       while (currentTime <= duration) {
-        if (isCancelled) break;
+        if (cancelRef.current) break;
         
         await new Promise((resolve) => {
           video.currentTime = currentTime;
@@ -219,7 +223,7 @@ const VideoToFrames = () => {
       setVideoQueue(prev => prev.map((v, idx) => idx === i ? { ...v, status: 'completed', progress: 100 } : v));
     }
 
-    if (!isCancelled) {
+    if (!cancelRef.current) {
       setResults({
         batch: allResults,
         timeTaken: ((Date.now() - startTimeStamp) / 1000).toFixed(1),
@@ -227,6 +231,9 @@ const VideoToFrames = () => {
         totalSize: (Object.values(allResults).flat().reduce((a, b) => a + b.size, 0) / (1024 * 1024)).toFixed(1)
       });
       setTotalProgress(100);
+    } else {
+      setVideoQueue([]);
+      setTotalProgress(0);
     }
     setIsExtracting(false);
     setCurrentVideoIndex(-1);
@@ -426,32 +433,38 @@ const VideoToFrames = () => {
               </div>
 
               <button 
-                disabled={videoQueue.length === 0 || isExtracting}
+                disabled={videoQueue.length === 0 || isExtracting || isPreparing}
                 onClick={extractFrames}
-                className={`w-full py-5 rounded-[20px] font-black text-sm uppercase tracking-widest transition-all flex items-center justify-center gap-2 shadow-xl ${videoQueue.length === 0 || isExtracting ? 'bg-slate-800 text-slate-500 cursor-not-allowed' : 'bg-[#C17BFF] text-white hover:bg-[#A855F7] hover:scale-[1.02] active:scale-[0.98] shadow-[#C17BFF]/30'}`}
+                className={`w-full py-5 rounded-[20px] font-black text-sm uppercase tracking-widest transition-all flex items-center justify-center gap-2 shadow-xl ${videoQueue.length === 0 || isExtracting || isPreparing ? 'bg-slate-800 text-slate-500 cursor-not-allowed' : 'bg-[#C17BFF] text-white hover:bg-[#A855F7] hover:scale-[1.02] active:scale-[0.98] shadow-[#C17BFF]/30'}`}
               >
-                {isExtracting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Scissors className="w-5 h-5" />}
-                {isExtracting ? 'Processing Batch...' : 'Begin Extraction'}
+                {(isExtracting || isPreparing) ? <Loader2 className="w-5 h-5 animate-spin" /> : <Scissors className="w-5 h-5" />}
+                {isPreparing ? 'Unpacking ZIP...' : (isExtracting ? 'Processing Batch...' : 'Begin Extraction')}
               </button>
 
-              {isExtracting && (
+              {(isExtracting || isPreparing) && (
                 <div className="mt-10 space-y-6 animate-in fade-in zoom-in-95">
                   <div className="space-y-2">
                     <div className="flex justify-between text-[10px] text-slate-400 uppercase font-black tracking-widest px-1">
-                      <span>Overall Progress</span>
-                      <span className="text-[#C17BFF]">{totalProgress}%</span>
+                      <span>{isPreparing ? 'Preparing Files' : 'Overall Progress'}</span>
+                      <span className="text-[#C17BFF]">{isPreparing ? 'Wait' : `${totalProgress}%`}</span>
                     </div>
-                    <div className="w-full h-3 bg-white/5 rounded-full overflow-hidden p-0.5 border border-white/5">
-                      <motion.div className="h-full bg-gradient-to-r from-[#C17BFF] to-[#A855F7] rounded-full shadow-[0_0_15px_rgba(193,123,255,0.4)]" initial={{ width: 0 }} animate={{ width: `${totalProgress}%` }} />
-                    </div>
+                    {isPreparing ? (
+                      <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden">
+                        <motion.div className="h-full bg-[#C17BFF]" animate={{ x: [-100, 400] }} transition={{ repeat: Infinity, duration: 1 }} style={{ width: '40%' }} />
+                      </div>
+                    ) : (
+                      <div className="w-full h-3 bg-white/5 rounded-full overflow-hidden p-0.5 border border-white/5">
+                        <motion.div className="h-full bg-gradient-to-r from-[#C17BFF] to-[#A855F7] rounded-full shadow-[0_0_15px_rgba(193,123,255,0.4)]" initial={{ width: 0 }} animate={{ width: `${totalProgress}%` }} />
+                      </div>
+                    )}
                   </div>
                   
                   <div className="flex justify-between items-center text-[10px] font-black uppercase text-slate-500 px-1">
                     <div className="flex items-center gap-2">
                       <Clock className="w-3 h-3" />
-                      <span>ETA: {eta}</span>
+                      <span>{isPreparing ? statusMessage : `ETA: ${eta}`}</span>
                     </div>
-                    <button onClick={() => setIsCancelled(true)} className="text-red-500/70 hover:text-red-500 flex items-center gap-1 transition-colors">
+                    <button onClick={() => cancelRef.current = true} className="text-red-500/70 hover:text-red-500 flex items-center gap-1 transition-colors">
                       <XCircle className="w-3 h-3" /> STOP
                     </button>
                   </div>
