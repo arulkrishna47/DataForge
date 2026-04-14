@@ -18,8 +18,16 @@ def download_weights():
     os.system(f"wget -q -O weights/groundingdino_swint_ogc.pth {gdino_url}")
     os.system(f"wget -q -O weights/groundingdino_swint_ogc.cfg.py {gdino_cfg}")
 
-  # SAM 2 downloads automatically via ultralytics
-  print("Weights downloaded successfully!")
+  # Pre-cache BERT model for offline use
+  print("Pre-caching BERT language model...")
+  try:
+    from transformers import AutoTokenizer, AutoModel
+    AutoTokenizer.from_pretrained("bert-base-uncased")
+    AutoModel.from_pretrained("bert-base-uncased")
+  except Exception as e:
+    print(f"Warning: BERT pre-cache failed: {e}. AI may still try to download during runtime.")
+
+  print("Weights and language models downloaded successfully!")
 
 if __name__ == "__main__":
   download_weights()
