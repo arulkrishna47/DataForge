@@ -176,7 +176,6 @@ const VideoToFrames = () => {
       let needsCleanup = false;
 
       try {
-        // Lazy Extraction for ZIP files
         if (currentItem.zipEntry && !activeUrl) {
           setStatusMessage(`Extracting ${currentItem.name}...`);
           const blob = await currentItem.zipEntry.async('blob');
@@ -185,7 +184,6 @@ const VideoToFrames = () => {
           
           const tempV = document.createElement('video');
           tempV.src = activeUrl;
-          // 5s timeout for metadata load
           await Promise.race([
             new Promise(r => tempV.onloadedmetadata = r),
             new Promise((_, r) => setTimeout(() => r(new Error('Timeout')), 5000))
@@ -200,36 +198,33 @@ const VideoToFrames = () => {
         }
 
         if (!currentItem.metadata) continue;
-        
         const video = videoRef.current;
         video.src = activeUrl;
         
         const { duration } = currentItem.metadata;
         const interval = 1 / settings.fps;
         let currentTime = 0;
+        let videoFramesCaptured = 0;
 
         while (currentTime <= duration) {
           if (cancelRef.current) break;
 
           await new Promise((resolve) => {
-            const timeout = setTimeout(() => resolve(), 5000); // 5s frame safety
+            const safetyTimeout = setTimeout(() => resolve(), 5000);
             video.currentTime = currentTime;
             video.onseeked = async () => {
-              clearTimeout(timeout);
+              clearTimeout(safetyTimeout);
               const canvas = canvasRef.current;
               const ctx = canvas.getContext('2d');
               
-              let targetWidth = video.videoWidth;
-              let targetHeight = video.videoHeight;
-              if (settings.resolution === 'custom') {
-                targetWidth = parseInt(settings.customWidth) || video.videoWidth;
-                targetHeight = parseInt(settings.customHeight) || video.videoHeight;
-              }
+              const targetWidth = settings.resolution === 'custom' ? (parseInt(settings.customWidth) || video.videoWidth) : video.videoWidth;
+              const targetHeight = settings.resolution === 'custom' ? (parseInt(settings.customHeight) || video.videoHeight) : video.videoHeight;
 
               canvas.width = targetWidth;
               canvas.height = targetHeight;
               ctx.drawImage(video, 0, 0, targetWidth, targetHeight);
 
+              // Captured synchronously from canvas, then compressed asynchronously
               canvas.toBlob((blob) => {
                 if (blob && !cancelRef.current) {
                   if (!allResults[currentItem.name]) allResults[currentItem.name] = [];
@@ -237,9 +232,14 @@ const VideoToFrames = () => {
                   allResults[currentItem.name].push({ name: `${frameName}.${settings.format}`, blob, size: blob.size });
                   
                   totalCaptured++;
-                  setVideoQueue(prev => prev.map((v, idx) => idx === i ? { ...v, progress: Math.min(100, Math.round((currentTime / duration) * 100)), status: 'processing' } : v));
-                  
-                  if (totalCaptured % 5 === 0) {
+                  videoFramesCaptured++;
+
+                  // Throttle UI updates (every 10 frames)
+                  if (videoFramesCaptured % 10 === 0) {
+                    const vProg = Math.min(100, Math.round((currentTime / duration) * 100));
+                    setVideoQueue(prev => prev.map((v, idx) => idx === i ? { ...v, progress: vProg, status: 'processing' } : v));
+                    const overallProg = Math.round(((i / videoQueue.length) + (vProg / 100 / videoQueue.length)) * 100);
+                    setTotalProgress(overallProg);
                     setLiveThumbnails(prev => [URL.createObjectURL(blob), ...prev].slice(0, 4));
                   }
                 }
@@ -248,9 +248,13 @@ const VideoToFrames = () => {
             };
           });
 
-          // Yield more time to browser UI thread
-          await new Promise(r => setTimeout(r, 10));
           currentTime += interval;
+          // Faster yielding (0ms) - only 10ms every 20 frames
+          if (videoFramesCaptured % 20 === 0) {
+            await new Promise(r => setTimeout(r, 10));
+          } else {
+            await new Promise(r => setTimeout(r, 0));
+          }
         }
       } catch (err) {
         console.error("Video processing error:", err);
