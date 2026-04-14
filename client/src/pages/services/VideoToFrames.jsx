@@ -82,15 +82,16 @@ const VideoToFrames = () => {
           
           for (const [path, zipEntry] of entries) {
             if (cancelRef.current) break;
+            const size = zipEntry._data.uncompressedSize || 0;
             queueItems.push({
               id: Math.random().toString(36).substr(2, 9),
               zipEntry,
               name: path.split('/').pop(),
-              url: null, // Extracted on demand
-              metadata: null,
+              url: null,
+              metadata: { duration: 0, width: 0, height: 0, size: (size / (1024 * 1024)).toFixed(2), isZip: true },
               progress: 0,
               status: 'pending',
-              sizeInBytes: zipEntry._data.uncompressedSize || 0
+              sizeInBytes: size
             });
           }
         } catch (err) {
@@ -353,7 +354,7 @@ const VideoToFrames = () => {
                           <div className="truncate pr-4">
                             <p className="text-sm font-bold truncate text-slate-200">{item.name}</p>
                             <p className="text-[10px] text-slate-500 font-mono">
-                              {item.metadata ? `${item.metadata.duration.toFixed(1)}s • ${item.metadata.width}x${item.metadata.height} • ${item.metadata.size}MB` : 'Analyzing source...'}
+                              {item.metadata?.isZip ? `ZIP Archive • ${item.metadata.size}MB (Ready)` : (item.metadata ? `${item.metadata.duration.toFixed(1)}s • ${item.metadata.width}x${item.metadata.height} • ${item.metadata.size}MB` : 'Analyzing source...')}
                             </p>
                           </div>
                         </div>
@@ -373,7 +374,7 @@ const VideoToFrames = () => {
                             </button>
                           )}
                         </div>
-                        {!item.metadata && (
+                        {item.url && !item.metadata?.isZip && !item.metadata?.duration && (
                           <video src={item.url} className="hidden" onLoadedMetadata={(e) => onVideoMetaLoad(item.id, e)} />
                         )}
                       </div>
