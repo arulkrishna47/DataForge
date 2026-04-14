@@ -107,13 +107,15 @@ class ImageAnnotator:
         if len(boxes_norm) == 0:
             return {"file": image_name, "detections": 0}
 
-        boxes_xyxy = self._boxes_to_xyxy(boxes_norm, w, h)
-        scores = logits.cpu().numpy()
+        # Convert and filter noise simultaneously to keep lengths in sync
+        boxes_xyxy, scores, filtered_phrases = self._convert_and_filter(boxes_norm, logits, phrases, w, h)
         
-        if len(boxes_xyxy) == 0: return {"file": image_name, "detections": 0}
+        if len(boxes_xyxy) == 0: 
+            return {"file": image_name, "detections": 0}
         
+        # Apply NMS with synced data
         boxes_xyxy, scores, keep_idx = self._apply_nms(boxes_xyxy, scores, iou_threshold=0.45)
-        phrases = [phrases[i] for i in keep_idx]
+        phrases = [filtered_phrases[i] for i in keep_idx]
         class_ids = np.array([self._phrase_to_label_idx(p) for p in phrases])
         
         # Simple export for now (YOLO)
@@ -127,33 +129,35 @@ class ImageAnnotator:
         
         return {"file": image_name, "detections": len(boxes_xyxy), "preview": str(preview_path)}
 
-    def _boxes_to_xyxy(self, boxes, img_w, img_h):
-        if len(boxes) == 0:
-            return np.array([])
-        
+    def _convert_and_filter(self, boxes, logits, phrases, img_w, img_h):
         boxes_np = boxes.cpu().numpy()
-        xyxy = []
-        for box in boxes_np:
-            cx, cy, w, h = box
-            x1 = (cx - w/2) * img_w
-            y1 = (cy - h/2) * img_h
-            x2 = (cx + w/2) * img_w
-            y2 = (cy + h/2) * img_h
+        scores_np = logits.cpu().numpy()
+        
+        xyxy, final_scores, final_phrases = [], [], []
+        
+        for i, box in enumerate(boxes_np):
+            cx, cy, bw, bh = box
+            x1, y1 = (cx - bw/2) * img_w, (cy - bh/2) * img_h
+            x2, y2 = (cx + bw/2) * img_w, (cy + bh/2) * img_h
             
-            # Clip to image boundaries
-            x1 = max(0, min(x1, img_w))
-            y1 = max(0, min(y1, img_h))
-            x2 = max(0, min(x2, img_w))
-            y2 = max(0, min(y2, img_h))
+            # Clip and filter noise
+            x1, y1 = max(0, min(x1, img_w)), max(0, min(y1, img_h))
+            x2, y2 = max(0, min(x2, img_w)), max(0, min(y2, img_h))
             
-            # Skip tiny boxes (noise)
             if (x2 - x1) > 5 and (y2 - y1) > 5:
                 xyxy.append([x1, y1, x2, y2])
-        return np.array(xyxy)
+                final_scores.append(scores_np[i])
+                # Phrases can sometimes be a list or a string depending on version
+                if isinstance(phrases, list):
+                    final_phrases.append(phrases[i])
+                else:
+                    final_phrases.append(phrases) # Fallback
+
+        return np.array(xyxy), np.array(final_scores), final_phrases
 
     def _apply_nms(self, boxes_xyxy, scores, iou_threshold=0.5):
         if len(boxes_xyxy) == 0:
-            return boxes_xyxy, scores, list(range(len(boxes_xyxy)))
+            return boxes_xyxy, scores, []
         
         boxes_t = torch.tensor(boxes_xyxy, dtype=torch.float32)
         scores_t = torch.tensor(scores, dtype=torch.float32)
