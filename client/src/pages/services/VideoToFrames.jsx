@@ -56,25 +56,55 @@ const VideoToFrames = () => {
   const handleFileUpload = async (e) => {
     const rawFiles = Array.from(e.target.files);
     const queueItems = [];
+    
     setIsPreparing(true);
     cancelRef.current = false;
+    setTotalProgress(0);
+
     for (const file of rawFiles) {
       if (cancelRef.current) break;
+
       if (file.type.startsWith('video/')) {
-        queueItems.push({ id: Math.random().toString(36).substr(2, 9), file, name: file.name, url: URL.createObjectURL(file), metadata: null, progress: 0, status: 'pending' });
+        queueItems.push({
+          id: Math.random().toString(36).substr(2, 9),
+          file,
+          name: file.name,
+          url: URL.createObjectURL(file),
+          metadata: null,
+          progress: 0,
+          status: 'pending'
+        });
       } else if (file.name.endsWith('.zip') || file.type === 'application/zip') {
         try {
           const zip = new JSZip();
           const contents = await zip.loadAsync(file);
           const entries = Object.entries(contents.files).filter(([p, z]) => !z.dir && isVideoFile(p));
+          
           for (const [path, zipEntry] of entries) {
-            queueItems.push({ id: Math.random().toString(36).substr(2, 9), zipEntry, name: path.split('/').pop(), url: null, metadata: null, progress: 0, status: 'pending' });
+            if (cancelRef.current) break;
+            queueItems.push({
+              id: Math.random().toString(36).substr(2, 9),
+              zipEntry,
+              name: path.split('/').pop(),
+              url: null, // Extracted on demand
+              metadata: null,
+              progress: 0,
+              status: 'pending',
+              sizeInBytes: zipEntry._data.uncompressedSize || 0
+            });
           }
-        } catch (err) { console.error("Zip error:", err); }
+        } catch (err) {
+          console.error("Zip error:", err);
+        }
       }
     }
-    if (!cancelRef.current) setVideoQueue(prev => [...prev, ...queueItems]);
+
+    if (!cancelRef.current) {
+      setVideoQueue(prev => [...prev, ...queueItems]);
+    }
+    
     setIsPreparing(false);
+    setStatusMessage('');
   };
 
   const isVideoFile = (filename) => {
@@ -122,7 +152,7 @@ const VideoToFrames = () => {
           duration: v.duration,
           width: v.videoWidth,
           height: v.videoHeight,
-          size: (item.file.size / (1024 * 1024)).toFixed(2)
+          size: item.file ? (item.file.size / (1024 * 1024)).toFixed(2) : (item.sizeInBytes / (1024 * 1024)).toFixed(2)
         }
       } : item
     ));
@@ -141,45 +171,81 @@ const VideoToFrames = () => {
       if (cancelRef.current) break;
       setCurrentVideoIndex(i);
       let currentItem = videoQueue[i];
-      let tempUrl = currentItem.url;
-      if (currentItem.zipEntry) {
+      let activeUrl = currentItem.url;
+      let needsCleanup = false;
+
+      // Lazy Extraction for ZIP files
+      if (currentItem.zipEntry && !activeUrl) {
         setStatusMessage(`Extracting ${currentItem.name}...`);
         const blob = await currentItem.zipEntry.async('blob');
-        tempUrl = URL.createObjectURL(blob);
-        const tempVideo = document.createElement('video');
-        tempVideo.src = tempUrl;
-        await new Promise(r => tempVideo.onloadedmetadata = r);
-        currentItem.metadata = { duration: tempVideo.duration, width: tempVideo.videoWidth, height: tempVideo.videoHeight };
+        activeUrl = URL.createObjectURL(blob);
+        needsCleanup = true;
+        
+        // Rapid metadata fetch for zipped videos
+        const tempV = document.createElement('video');
+        tempV.src = activeUrl;
+        await new Promise(r => tempV.onloadedmetadata = r);
+        currentItem.metadata = {
+          duration: tempV.duration,
+          width: tempV.videoWidth,
+          height: tempV.videoHeight,
+          size: (blob.size / (1024 * 1024)).toFixed(2)
+        };
       }
+
       if (!currentItem.metadata) continue;
+      
       const video = videoRef.current;
-      video.src = tempUrl;
+      video.src = activeUrl;
+      
       const { duration } = currentItem.metadata;
       const interval = 1 / settings.fps;
       let currentTime = 0;
+
       while (currentTime <= duration) {
         if (cancelRef.current) break;
-        await new Promise((r) => {
+
+        await new Promise((resolve) => {
           video.currentTime = currentTime;
-          video.onseeked = () => {
-            canvasRef.current.width = settings.resolution === 'original' ? currentItem.metadata.width : (parseInt(settings.customWidth) || 1280);
-            canvasRef.current.height = settings.resolution === 'original' ? currentItem.metadata.height : (parseInt(settings.customHeight) || 720);
-            canvasRef.current.getContext('2d').drawImage(video, 0, 0, canvasRef.current.width, canvasRef.current.height);
-            canvasRef.current.toBlob((blob) => {
+          video.onseeked = async () => {
+            const canvas = canvasRef.current;
+            const ctx = canvas.getContext('2d');
+            
+            let targetWidth = video.videoWidth;
+            let targetHeight = video.videoHeight;
+            if (settings.resolution === 'custom') {
+              targetWidth = parseInt(settings.customWidth) || video.videoWidth;
+              targetHeight = parseInt(settings.customHeight) || video.videoHeight;
+            }
+
+            canvas.width = targetWidth;
+            canvas.height = targetHeight;
+            ctx.drawImage(video, 0, 0, targetWidth, targetHeight);
+
+            canvas.toBlob((blob) => {
               if (blob) {
                 if (!allResults[currentItem.name]) allResults[currentItem.name] = [];
-                allResults[currentItem.name].push({ name: `${currentItem.name}_${totalCaptured}.${settings.format}`, blob, size: blob.size });
+                const frameName = settings.namingPattern.replace('{video}', currentItem.name.split('.')[0]).replace('{n}', Math.floor(currentTime * settings.fps));
+                allResults[currentItem.name].push({ name: `${frameName}.${settings.format}`, blob, size: blob.size });
+                
                 totalCaptured++;
                 setVideoQueue(prev => prev.map((v, idx) => idx === i ? { ...v, progress: Math.min(100, Math.round((currentTime / duration) * 100)), status: 'processing' } : v));
-                setLiveThumbnails(prev => [URL.createObjectURL(blob), ...prev].slice(0, 4));
+                
+                if (totalCaptured % 5 === 0) {
+                  setLiveThumbnails(prev => [URL.createObjectURL(blob), ...prev].slice(0, 4));
+                }
               }
-              r();
+              resolve();
             }, `image/${settings.format === 'jpg' ? 'jpeg' : settings.format}`, settings.quality / 100);
           };
         });
+
+        // Yield to browser UI thread
+        await new Promise(r => setTimeout(r, 0));
         currentTime += interval;
       }
-      if (currentItem.zipEntry) URL.revokeObjectURL(tempUrl);
+
+      if (needsCleanup) URL.revokeObjectURL(activeUrl);
       setVideoQueue(prev => prev.map((v, idx) => idx === i ? { ...v, status: 'completed', progress: 100 } : v));
     }
 
