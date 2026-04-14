@@ -51,9 +51,56 @@ const VideoToFrames = () => {
     setEstimate({ count: totalCount, size: totalSize });
   }, [settings, videoQueue]);
 
-  const handleFileUpload = (e) => {
-    const files = Array.from(e.target.files).filter(f => f.type.startsWith('video/'));
-    addFilesToQueue(files);
+  const handleFileUpload = async (e) => {
+    const rawFiles = Array.from(e.target.files);
+    const videoFiles = [];
+    
+    setIsExtracting(true); // Show loader while unzipping
+    setTotalProgress(0);
+    setStatusMessage('Reading upload...');
+
+    for (const file of rawFiles) {
+      if (file.type.startsWith('video/')) {
+        videoFiles.push(file);
+      } else if (file.name.endsWith('.zip') || file.type === 'application/zip') {
+        try {
+          setStatusMessage(`Unzipping ${file.name}...`);
+          const zip = new JSZip();
+          const contents = await zip.loadAsync(file);
+          
+          for (const [path, zipEntry] of Object.entries(contents.files)) {
+            if (!zipEntry.dir && isVideoFile(path)) {
+              const content = await zipEntry.async('blob');
+              const videoFile = new File([content], path.split('/').pop(), { type: getMimeType(path) });
+              videoFiles.push(videoFile);
+            }
+          }
+        } catch (err) {
+          console.error("Zip error:", err);
+        }
+      }
+    }
+
+    addFilesToQueue(videoFiles);
+    setIsExtracting(false);
+    setStatusMessage('');
+  };
+
+  const isVideoFile = (filename) => {
+    const ext = filename.split('.').pop().toLowerCase();
+    return ['mp4', 'mov', 'avi', 'mkv', 'webm'].includes(ext);
+  };
+
+  const getMimeType = (filename) => {
+    const ext = filename.split('.').pop().toLowerCase();
+    const map = {
+      'mp4': 'video/mp4',
+      'mov': 'video/quicktime',
+      'avi': 'video/x-msvideo',
+      'mkv': 'video/x-matroska',
+      'webm': 'video/webm'
+    };
+    return map[ext] || 'video/mp4';
   };
 
   const addFilesToQueue = (files) => {
@@ -239,13 +286,13 @@ const VideoToFrames = () => {
             {/* Multi-Upload Zone */}
             <section className="bg-[#0D0D15] rounded-3xl border border-white/5 p-8 transition-all hover:border-[#C17BFF]/20 relative">
               <div className="border-2 border-dashed border-white/10 rounded-2xl py-12 flex flex-col items-center justify-center group cursor-pointer hover:border-[#C17BFF]/40 transition-all bg-[#08080C] relative">
-                <input type="file" multiple className="absolute inset-0 opacity-0 cursor-pointer" id="video-upload" accept="video/*" onChange={handleFileUpload} disabled={isExtracting} />
+                <input type="file" multiple className="absolute inset-0 opacity-0 cursor-pointer" id="video-upload" accept="video/*,.zip" onChange={handleFileUpload} disabled={isExtracting} />
                 <div className="flex flex-col items-center pointer-events-none">
                   <div className="w-16 h-16 rounded-2xl bg-[#C17BFF]/10 flex items-center justify-center text-[#C17BFF] mb-6 group-hover:scale-110 transition-transform">
                     <Upload className="w-8 h-8" />
                   </div>
-                  <span className="text-lg font-bold mb-2">Click or Drag Videos</span>
-                  <span className="text-slate-500 text-sm">Upload multiple files to process in sequence</span>
+                  <span className="text-lg font-bold mb-2">Click or Drag Videos/ZIP</span>
+                  <span className="text-slate-500 text-sm">Upload multiple files or a single ZIP archive</span>
                 </div>
               </div>
 
