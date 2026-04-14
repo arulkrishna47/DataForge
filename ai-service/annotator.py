@@ -89,12 +89,16 @@ class ImageAnnotator:
         return boxes, logits, phrases
 
     def _detect_from_array(self, image_bgr):
-        # We need to save to a temp file because load_image expects a path 
-        # (GroundingDINO util limitation). But we'll use a fast ramdisk/temp path.
-        temp_path = "temp_detection.jpg"
-        cv2.imwrite(temp_path, image_bgr)
-        boxes, logits, phrases = self._detect_objects(temp_path, image_bgr)
-        return boxes, logits, phrases
+        import uuid
+        # Use unique temp path to prevent parallel processing clashes
+        temp_path = f"temp_detect_{uuid.uuid4().hex[:8]}.jpg"
+        try:
+            cv2.imwrite(temp_path, image_bgr)
+            boxes, logits, phrases = self._detect_objects(temp_path, image_bgr)
+            return boxes, logits, phrases
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
 
     def _process_detections(self, image_bgr, detections, output_dir, image_name):
         boxes_norm, logits, phrases = detections
@@ -165,7 +169,7 @@ class ImageAnnotator:
             if label.lower() in phrase_lower: return i
         for i, label in enumerate(self.labels):
             if phrase_lower in label.lower(): return i
-        return 0
+        return -1 # Return -1 to indicate NO MATCH
 
     def annotate_image(self, image_path: str, output_dir: str, export_format: str = "yolo") -> dict:
         image_name = Path(image_path).stem
@@ -187,7 +191,24 @@ class ImageAnnotator:
         
         boxes_xyxy, scores, keep_idx = self._apply_nms(boxes_xyxy, scores, iou_threshold=0.45)
         phrases = [phrases[i] for i in keep_idx]
-        class_ids = np.array([self._phrase_to_label_idx(p) for p in phrases])
+        
+        # Filter classes that don't match our requested labels
+        final_boxes, final_phrases, final_class_ids, final_scores = [], [], [], []
+        for i, p in enumerate(phrases):
+            idx = self._phrase_to_label_idx(p)
+            if idx != -1:
+                final_boxes.append(boxes_xyxy[i])
+                final_phrases.append(self.labels[idx])
+                final_class_ids.append(idx)
+                final_scores.append(scores[i])
+        
+        if not final_boxes:
+            return {"file": image_path, "detections": 0, "message": "No matching labels found"}
+            
+        boxes_xyxy = np.array(final_boxes)
+        phrases = final_phrases
+        class_ids = np.array(final_class_ids)
+        scores = np.array(final_scores)
         
         masks = None
         try:
@@ -318,7 +339,6 @@ class VideoAnnotator:
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         duration = total_frames / fps
-        
         frames_dir = Path(output_dir) / "frames" / video_name
         frames_dir.mkdir(parents=True, exist_ok=True)
 
@@ -329,18 +349,6 @@ class VideoAnnotator:
             elif duration < 300: sample_fps = 2
             else: sample_fps = 1
         
-        frame_interval = max(1, int(fps / sample_fps))
-        saved_frames, curr = [], 0
-        while True:
-            ret, frame = cap.read()
-            if not ret: break
-            if curr % frame_interval == 0:
-                f_path = frames_dir / f"frame_{curr:06d}.jpg"
-                cv2.imwrite(str(f_path), frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
-                saved_frames.append(str(f_path))
-            curr += 1
-        cap.release()
-
         frame_interval = max(1, int(fps / sample_fps))
         all_results, saved_frames, curr = [], [], 0
         
