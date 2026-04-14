@@ -88,6 +88,41 @@ class ImageAnnotator:
         )
         return boxes, logits, phrases
 
+    def _detect_from_array(self, image_bgr):
+        # We need to save to a temp file because load_image expects a path 
+        # (GroundingDINO util limitation). But we'll use a fast ramdisk/temp path.
+        temp_path = "temp_detection.jpg"
+        cv2.imwrite(temp_path, image_bgr)
+        boxes, logits, phrases = self._detect_objects(temp_path, image_bgr)
+        return boxes, logits, phrases
+
+    def _process_detections(self, image_bgr, detections, output_dir, image_name):
+        boxes_norm, logits, phrases = detections
+        h, w = image_bgr.shape[:2]
+        
+        if len(boxes_norm) == 0:
+            return {"file": image_name, "detections": 0}
+
+        boxes_xyxy = self._boxes_to_xyxy(boxes_norm, w, h)
+        scores = logits.cpu().numpy()
+        
+        if len(boxes_xyxy) == 0: return {"file": image_name, "detections": 0}
+        
+        boxes_xyxy, scores, keep_idx = self._apply_nms(boxes_xyxy, scores, iou_threshold=0.45)
+        phrases = [phrases[i] for i in keep_idx]
+        class_ids = np.array([self._phrase_to_label_idx(p) for p in phrases])
+        
+        # Simple export for now (YOLO)
+        self._export_yolo(image_name.replace(".jpg",""), boxes_xyxy, class_ids, w, h, Path(output_dir))
+        
+        # Preview
+        annotated = self._draw_annotations(cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB), boxes_xyxy, class_ids, scores, phrases)
+        preview_path = Path(output_dir) / "previews" / image_name
+        preview_path.parent.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(preview_path), cv2.cvtColor(annotated, cv2.COLOR_RGB2BGR))
+        
+        return {"file": image_name, "detections": len(boxes_xyxy), "preview": str(preview_path)}
+
     def _boxes_to_xyxy(self, boxes, img_w, img_h):
         if len(boxes) == 0:
             return np.array([])
@@ -289,9 +324,9 @@ class VideoAnnotator:
 
         if self.sample_fps > 0: sample_fps = self.sample_fps
         else:
-            if duration < 30: sample_fps = fps
-            elif duration < 120: sample_fps = 5
-            elif duration < 600: sample_fps = 2
+            # Optimized Auto-Smart: Don't process every frame even for short clips
+            if duration < 60: sample_fps = 5  # 5 FPS is plenty for most motion
+            elif duration < 300: sample_fps = 2
             else: sample_fps = 1
         
         frame_interval = max(1, int(fps / sample_fps))
@@ -306,15 +341,31 @@ class VideoAnnotator:
             curr += 1
         cap.release()
 
-        all_results = []
-        total_saved = len(saved_frames)
-        for i, fp in enumerate(saved_frames):
-            all_results.append(self.image_annotator.annotate_image(fp, output_dir, export_format))
-            if progress_callback and total_saved > 0:
-                # Video processing takes 90% of the single-file progress
-                progress_callback(int((i / total_saved) * 90))
+        frame_interval = max(1, int(fps / sample_fps))
+        all_results, saved_frames, curr = [], [], 0
         
-        if progress_callback: progress_callback(95) # Finishing touches
+        while True:
+            ret, frame = cap.read()
+            if not ret: break
+            
+            if curr % frame_interval == 0:
+                f_name = f"frame_{curr:06d}.jpg"
+                f_path = frames_dir / f_name
+                
+                # Detect and process in one flow
+                detections = self.image_annotator._detect_from_array(frame)
+                res = self.image_annotator._process_detections(frame, detections, output_dir, f_name)
+                
+                # Save raw image for final storage
+                cv2.imwrite(str(f_path), frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
+                saved_frames.append(str(f_path))
+                all_results.append(res)
+                
+                if progress_callback:
+                    progress_callback(int((curr / total_frames) * 100))
+                    
+            curr += 1
+        cap.release()
         
         annotated_video_path = self._build_output_video(saved_frames, output_dir, video_name, fps, w, h)
         timeline = self._build_timeline(all_results, saved_frames, fps)
