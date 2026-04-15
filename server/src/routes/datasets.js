@@ -1,10 +1,14 @@
 const express = require('express');
 const router = express.Router();
 const axios = require('axios');
-const { authenticate } = require('../middleware/authMiddleware');
+const { protect } = require('../middleware/authMiddleware');
+
+if (typeof protect !== 'function') {
+  throw new Error('protect middleware is not a function - check /middleware/authMiddleware.js export');
+}
 
 // GET /api/datasets/search
-router.get('/search', authenticate, async (req, res) => {
+router.get('/search', protect, async (req, res) => {
   try {
     const { 
       query, 
