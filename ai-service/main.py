@@ -40,14 +40,22 @@ VIDEO_ENGINE = None
 
 def get_engine():
     global GLOBAL_ENGINE, VIDEO_ENGINE
-    if GLOBAL_ENGINE is None:
-        print("[SYSTEM] Lazy Loading AI Brain into VRAM...")
-        # Start with default labels to pre-load weights
-        GLOBAL_ENGINE = ImageAnnotator(labels=["person"], box_threshold=0.20, text_threshold=0.20)
-        # SHARE the same engine instance to save VRAM
-        VIDEO_ENGINE = VideoAnnotator(GLOBAL_ENGINE)
-        print("[SYSTEM] Brain Online.")
-    return GLOBAL_ENGINE, VIDEO_ENGINE
+    try:
+        if GLOBAL_ENGINE is None:
+            print("[SYSTEM] Lazy Loading AI Brain into VRAM...")
+            # Start with default labels to pre-load weights
+            GLOBAL_ENGINE = ImageAnnotator(labels=["person"], box_threshold=0.20, text_threshold=0.20)
+            
+            # SHARE the same engine instance to save VRAM and fix 'NoneType' error
+            print("[SYSTEM] Initializing Video Subsystem...")
+            VIDEO_ENGINE = VideoAnnotator(GLOBAL_ENGINE)
+            print("[SYSTEM] All AI Engines Online.")
+        return GLOBAL_ENGINE, VIDEO_ENGINE
+    except Exception as e:
+        print(f"[ERROR] Engine loading failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return None, None
 
 @app.get("/health")
 async def health():
@@ -156,15 +164,24 @@ async def run_annotation_job(job_id, file_paths, labels, export_format, box_th, 
     # Lazy load the models only when needed
     image_engine, video_engine = get_engine()
     
+    if not image_engine or not video_engine:
+        raise RuntimeError("AI Engines failed to initialize. Check VRAM/logs.")
+    
     # Ensure they use the latest parameters and sterilized labels
-    # We call __init__ logic indirectly by just reassignment since we sanitized in init
     image_engine.labels = labels
     image_engine.box_threshold = float(box_th)
     image_engine.text_threshold = float(text_th)
+    
+    # Sync video engine settings
+    video_engine.labels = labels
+    video_engine.box_threshold = float(box_th)
+    video_engine.text_threshold = float(text_th)
+    video_engine.sample_fps = float(sample_fps)
+    
+    # Also sync the underlying image annotator inside the video engine
     video_engine.image_annotator.labels = labels
     video_engine.image_annotator.box_threshold = float(box_th)
     video_engine.image_annotator.text_threshold = float(text_th)
-    video_engine.sample_fps = float(sample_fps)
     
     jobs[job_id]["message"] = "AI Brain Online. Starting Analysis..."
     await sio.emit("job_progress", {"job_id": job_id, "progress": 5, "message": jobs[job_id]["message"]})
