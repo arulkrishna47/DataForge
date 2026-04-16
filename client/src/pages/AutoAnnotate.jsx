@@ -428,8 +428,8 @@ export default function AutoAnnotate() {
                           </div>
                         </div>
                         <div className="p-4">
-                           <p className="text-white text-sm font-bold truncate">{res.file.split(/[\\/]/).pop()}</p>
-                           <p className="text-[10px] text-[#10B981] mt-1 font-mono">{res.labels_found?.join(', ') || 'Processing'}</p>
+                           <p className="text-white text-sm font-bold truncate">{res?.file?.split(/[\\/]/).pop() || 'Unknown File'}</p>
+                           <p className="text-[10px] text-[#10B981] mt-1 font-mono">{res?.labels_found?.join(', ') || 'Processing'}</p>
                         </div>
                      </div>
                    ))}

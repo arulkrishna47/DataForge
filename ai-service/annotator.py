@@ -180,7 +180,7 @@ class ImageAnnotator:
     image_name = Path(image_path).stem if isinstance(image_input, str) else "frame"
     
     if image_bgr is None:
-      return {"error": "Invalid image input"}
+      return {"file": image_path, "error": "Invalid image input"}
     
     h_orig, w_orig = image_bgr.shape[:2]
     image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
@@ -203,11 +203,11 @@ class ImageAnnotator:
         os.remove(temp_path)
     
     if boxes_norm is None or len(boxes_norm) == 0:
-      return {"detections": 0, "message": "No objects detected"}
+      return {"file": image_path, "detections": 0, "message": "No objects detected"}
     
     boxes_xyxy = self._boxes_to_xyxy(boxes_norm, w_orig, h_orig)
     if len(boxes_xyxy) == 0:
-      return {"detections": 0, "message": "No valid boxes"}
+      return {"file": image_path, "detections": 0, "message": "No valid boxes"}
     
     scores = logits.cpu().numpy() if hasattr(logits, 'cpu') else np.array(logits)
     boxes_xyxy, scores, keep_idx = self._apply_nms(boxes_xyxy, scores)
@@ -229,7 +229,7 @@ class ImageAnnotator:
     
     annotated = self._draw_annotations(image_rgb, boxes_xyxy, class_ids, scores, phrases_kept, masks)
     
-    res = {"detections": len(boxes_xyxy), "labels_found": list(set(phrases_kept))}
+    res = {"file": image_path, "detections": len(boxes_xyxy), "labels_found": list(set(phrases_kept))}
     
     if save_preview:
         out_path = Path(output_dir)
