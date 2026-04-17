@@ -34,12 +34,17 @@ const SOURCES = [
   { value: 'github', label: '🐙 GitHub' },
 ]
 
-const QUICK_SEARCHES = [
-  'face detection', 'sentiment analysis',
-  'object detection', 'medical imaging',
-  'autonomous driving', 'speech recognition',
-  'satellite imagery', 'pose estimation',
-  'segmentation', 'recommendation'
+const POPULAR_SEARCHES = [
+  { query: 'COCO detection', type: 'object-detection', label: '🎯 COCO' },
+  { query: 'ImageNet', type: 'image', label: '🖼️ ImageNet' },
+  { query: 'face recognition', type: 'image', label: '👤 Faces' },
+  { query: 'sentiment analysis', type: 'nlp', label: '💬 Sentiment' },
+  { query: 'speech commands', type: 'audio', label: '🔊 Speech' },
+  { query: 'medical imaging', type: 'image', label: '🏥 Medical' },
+  { query: 'autonomous driving', type: 'video', label: '🚗 Driving' },
+  { query: 'mnist handwritten', type: 'image', label: '✍️ MNIST' },
+  { query: 'twitter sentiment', type: 'text', label: '🐦 Twitter' },
+  { query: 'aerial satellite', type: 'image', label: '🛰️ Satellite' },
 ]
 
 const SOURCE_COLORS = {
@@ -203,6 +208,37 @@ export default function DatasetSearch() {
               ))}
             </div>
           </div>
+
+          {stats?.sources?.map((s) => 
+            s.error && (
+              <div key={s.name} 
+                className="text-xs text-amber-400 
+                  bg-amber-900/20 px-3 py-2 rounded-lg mt-4
+                  flex items-center gap-2"
+              >
+                ⚠️ {s.name}: {
+                  s.error.includes('credentials') || s.error.includes('configured')
+                    ? 'API key not configured'
+                    : s.error.includes('rate limit')
+                    ? 'Rate limit reached'
+                    : 'Temporarily unavailable'
+                }
+              </div>
+            )
+          )}
+          
+          {stats?.sources?.find(
+            s => s.name === 'kaggle' && 
+            s.error?.includes('not configured')
+          ) && (
+            <div className="text-xs text-blue-400 bg-blue-900/20 p-3 rounded-lg mt-2">
+              <strong>Enable Kaggle results:</strong>
+              <br />
+              1. Go to kaggle.com → Account → API → "Create New Token"
+              <br />
+              2. Add to server .env: KAGGLE_USERNAME=xxx KAGGLE_KEY=xxx
+            </div>
+          )}
         </div>
 
         {/* Results Area */}
@@ -220,13 +256,16 @@ export default function DatasetSearch() {
               <h2 className="text-2xl font-bold mb-2 text-white/80">Ready to collect?</h2>
               <p className="text-gray-500 mb-8 max-w-md">Enter a query above to find high-quality datasets across the most popular sources.</p>
               <div className="flex flex-wrap justify-center gap-2 max-w-2xl">
-                {QUICK_SEARCHES.map(qs => (
+                {POPULAR_SEARCHES.map(qs => (
                   <button
-                    key={qs}
-                    onClick={() => handleSearch(qs)}
+                    key={qs.query}
+                    onClick={() => {
+                      setDatasetType(qs.type)
+                      handleSearch(qs.query)
+                    }}
                     className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/5 rounded-lg text-xs text-gray-400 font-medium transition-all"
                   >
-                    {qs}
+                    {qs.label}
                   </button>
                 ))}
               </div>
@@ -277,9 +316,16 @@ export default function DatasetSearch() {
                     </div>
 
                     <div className="mb-4 pr-16">
-                      <h3 className="text-xl font-bold mb-2 line-clamp-1 text-white group-hover:text-[#C17BFF] transition-colors">
-                        {dataset.title}
-                      </h3>
+                      <div className="flex items-center gap-2 mb-2">
+                        <h3 className="text-xl font-bold line-clamp-1 text-white group-hover:text-[#C17BFF] transition-colors">
+                          {dataset.title}
+                        </h3>
+                        {process.env.NODE_ENV === 'development' && dataset.relevanceScore !== undefined && (
+                          <span className="text-[10px] bg-white/10 px-2 py-0.5 rounded text-gray-400 whitespace-nowrap">
+                            Score: {dataset.relevanceScore?.toFixed(0)}
+                          </span>
+                        )}
+                      </div>
                       <p className="text-gray-400 text-sm line-clamp-2 leading-relaxed h-10">
                         {dataset.description}
                       </p>
@@ -323,10 +369,15 @@ export default function DatasetSearch() {
               </motion.div>
 
               {results.length === 0 && searched && !loading && (
-                <div className="flex flex-col items-center justify-center py-20 opacity-50">
-                  <Info size={48} className="mb-4 text-gray-600" />
-                  <p className="text-lg text-white">No datasets found for this query.</p>
-                  <p className="text-sm text-gray-400">Try broadening your search or checking different sources.</p>
+                <div className="text-center py-16 text-gray-400">
+                  <div className="text-5xl mb-4">🔍</div>
+                  <h3 className="text-xl text-white mb-2">No datasets found for "{query}"</h3>
+                  <p>Try these tips:</p>
+                  <ul className="text-sm mt-2 flex flex-col items-center gap-1">
+                    <li>• Use simpler keywords (e.g. "cats" instead of "cat images dataset")</li>
+                    <li>• Try a different dataset type filter</li>
+                    <li>• Search for the domain (e.g. "medical", "traffic", "retail")</li>
+                  </ul>
                 </div>
               )}
             </>
