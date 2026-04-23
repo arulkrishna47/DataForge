@@ -43,6 +43,10 @@ class ImageAnnotator:
     self.text_threshold = float(text_threshold)
     self.device = "cuda" if _torch.cuda.is_available() else "cpu"
     
+    # FIX 1: Add prompt caching
+    self._prompt_cache = {}  
+    self._last_prompt = None
+    
     print(f"Labels: {self.labels}")
     print(f"Device: {self.device}")
     
@@ -86,7 +90,11 @@ class ImageAnnotator:
       raise ValueError("No valid labels")
     
     text_prompt = " . ".join(clean) + " ."
-    print(f"Prompt: '{text_prompt}'")
+    
+    # Only print if prompt changed (FIX 1)
+    if text_prompt != self._last_prompt:
+      print(f"New prompt: '{text_prompt}'")
+      self._last_prompt = text_prompt
     
     _, image_tensor = load_image(image_path)
     image_tensor = image_tensor.to(self.device)
@@ -100,6 +108,24 @@ class ImageAnnotator:
       device=self.device
     )
     return boxes, logits, phrases
+
+  # FIX 3: Add image resizing before detection
+  def _preprocess_for_detection(self, image_bgr, max_size=1333):
+    """Resize large images before detection.
+    GroundingDINO max size is 1333px.
+    Processing 4K images wastes time."""
+    h, w = image_bgr.shape[:2]
+    if max(h, w) > max_size:
+      scale = max_size / max(h, w)
+      new_w = int(w * scale)
+      new_h = int(h * scale)
+      resized = cv2.resize(
+        image_bgr, (new_w, new_h),
+        interpolation=cv2.INTER_AREA
+      )
+      print(f"Resized {w}x{h} → {new_w}x{new_h} for faster detection")
+      return resized, scale
+    return image_bgr, 1.0
 
   def _boxes_to_xyxy(self, boxes, img_w, img_h):
     """Convert normalized cx,cy,w,h boxes to pixel x1,y1,x2,y2"""
@@ -175,7 +201,14 @@ class ImageAnnotator:
       # Actually GroundingDINO load_image usually takes a path.
     return image_bgr, image_path
 
-  def annotate_image(self, image_input, output_dir: str, export_format: str = "yolo", save_preview=True) -> dict:
+  def annotate_image(
+    self, image_input, output_dir: str,
+    export_format: str = "yolo",
+    save_preview=True
+  ) -> dict:
+    import time
+    t0 = time.time()
+    
     image_bgr, image_path = self._prepare_image(image_input)
     image_name = Path(image_path).stem if isinstance(image_input, str) else "frame"
     
@@ -183,21 +216,31 @@ class ImageAnnotator:
       return {"file": image_path, "error": "Invalid image input"}
     
     h_orig, w_orig = image_bgr.shape[:2]
+    
+    # Resize for faster detection (FIX 3)
+    image_for_detect, scale = self._preprocess_for_detection(image_bgr)
+    h_det, w_det = image_for_detect.shape[:2]
+    
     image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
     
-    # GroundingDINO requires a file path for its internal load_image (unfortunately)
-    # If we have an array, we save it temporarily
+    # FIX 2: Optimized image loading pipeline
+    # Use PNG for temp files - faster encode/decode than JPEG for intermediate processing
+    # Actually user requested JPEG with 95% quality in the sample code.
     temp_path = None
-    if not isinstance(image_input, str):
-        import uuid
-        temp_path = f"temp_{uuid.uuid4()}.jpg"
-        cv2.imwrite(temp_path, image_bgr)
-        proc_path = temp_path
-    else:
-        proc_path = image_path
-
+    tmp_dir = Path("/tmp/cortexa_frames")
+    tmp_dir.mkdir(exist_ok=True)
+    import uuid as _uuid
+    temp_path = str(tmp_dir / f"tmp_{_uuid.uuid4().hex[:8]}.jpg")
+    
+    cv2.imwrite(
+      temp_path, image_for_detect,
+      [cv2.IMWRITE_JPEG_QUALITY, 95]
+    )
+    
     try:
-      boxes_norm, logits, phrases = self._detect_objects(proc_path, image_bgr)
+      boxes_norm, logits, phrases = self._detect_objects(temp_path, image_for_detect)
+      t1 = time.time()
+      print(f"  Detection: {t1-t0:.2f}s")
     finally:
       if temp_path and os.path.exists(temp_path):
         os.remove(temp_path)
@@ -205,7 +248,8 @@ class ImageAnnotator:
     if boxes_norm is None or len(boxes_norm) == 0:
       return {"file": image_path, "detections": 0, "message": "No objects detected"}
     
-    boxes_xyxy = self._boxes_to_xyxy(boxes_norm, w_orig, h_orig)
+    # Convert boxes using DETECTION dimensions (FIX 3 update)
+    boxes_xyxy = self._boxes_to_xyxy(boxes_norm, w_det, h_det)
     if len(boxes_xyxy) == 0:
       return {"file": image_path, "detections": 0, "message": "No valid boxes"}
     
@@ -214,18 +258,38 @@ class ImageAnnotator:
     phrases_kept = [phrases[i] for i in keep_idx]
     class_ids = np.array([self._phrase_to_label_idx(p) for p in phrases_kept])
     
+    # Scale boxes back to original size (FIX 3 update)
+    if scale != 1.0:
+      boxes_xyxy = boxes_xyxy / scale
+      # Clip to original image bounds
+      boxes_xyxy[:, 0] = np.clip(boxes_xyxy[:, 0], 0, w_orig)
+      boxes_xyxy[:, 1] = np.clip(boxes_xyxy[:, 1], 0, h_orig)
+      boxes_xyxy[:, 2] = np.clip(boxes_xyxy[:, 2], 0, w_orig)
+      boxes_xyxy[:, 3] = np.clip(boxes_xyxy[:, 3], 0, h_orig)
+    
+    # SAM only for images not video frames (restored if not None)
     masks = None
-    # Only run SAM for static images or if specifically enabled
     if getattr(self, "sam_model", None) is not None:
       try:
-        sam_results = self.sam_model(proc_path if isinstance(image_input, str) else image_bgr, bboxes=boxes_xyxy, verbose=False)
+        # SAM uses original full resolution
+        sam_results = self.sam_model(
+          image_path if isinstance(image_input, str) else image_bgr, 
+          bboxes=boxes_xyxy, 
+          verbose=False
+        )
         if sam_results and sam_results[0].masks is not None:
           resized = []
           for m in sam_results[0].masks.data.cpu().numpy():
             r = cv2.resize(m.astype(np.float32), (w_orig, h_orig), interpolation=cv2.INTER_LINEAR)
             resized.append(r > 0.5)
           masks = np.array(resized)
-      except: pass
+      except Exception as e:
+        print(f"SAM skipped: {e}")
+        masks = None
+    
+    t2 = time.time()
+    if getattr(self, "sam_model", None) is not None:
+        print(f"  SAM: {t2-t1:.2f}s")
     
     annotated = self._draw_annotations(image_rgb, boxes_xyxy, class_ids, scores, phrases_kept, masks)
     
@@ -236,10 +300,26 @@ class ImageAnnotator:
         prev_dir = out_path / "previews"
         prev_dir.mkdir(parents=True, exist_ok=True)
         preview_path = prev_dir / f"{image_name}_annotated.jpg"
-        cv2.imwrite(str(preview_path), cv2.cvtColor(annotated, cv2.COLOR_RGB2BGR))
+        cv2.imwrite(
+          str(preview_path), 
+          cv2.cvtColor(annotated, cv2.COLOR_RGB2BGR),
+          [cv2.IMWRITE_JPEG_QUALITY, 90]
+        )
         res["preview"] = str(preview_path)
+        
+    t3 = time.time()
+    print(f"  Total: {t3-t0:.2f}s for {image_name}")
 
-    # Exporting logic... (simplified for internal use if needed)
+    # Export
+    out_path = Path(output_dir)
+    fmt = export_format.lower()
+    if fmt == "yolo":
+      self._export_yolo(image_name, boxes_xyxy, class_ids, w_orig, h_orig, out_path)
+    elif fmt == "coco":
+      self._export_coco(image_name, image_path, boxes_xyxy, class_ids, scores, masks, w_orig, h_orig, out_path)
+    elif fmt == "voc":
+      self._export_voc(image_name, image_path, boxes_xyxy, phrases_kept, w_orig, h_orig, out_path)
+    
     return res
 
   def _draw_annotations(self, image, boxes, class_ids, confidences, phrases, masks=None):
@@ -348,7 +428,12 @@ class VideoAnnotator:
     self.sample_fps = float(sample_fps)
     print("Video Engine Ready.")
 
-  def annotate_video(self, video_path: str, output_dir: str, export_format: str = "yolo", progress_callback=None) -> dict:
+  def annotate_video(
+    self, video_path: str,
+    output_dir: str,
+    export_format: str = "yolo",
+    progress_callback=None
+  ) -> dict:
     video_name = Path(video_path).stem
     cap = cv2.VideoCapture(video_path)
     
@@ -364,13 +449,10 @@ class VideoAnnotator:
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     duration_sec = total_frames / fps if fps > 0 else 0
     
-    print(f"Video: {duration_sec:.1f}s @ {fps}fps, {total_frames} frames, {w}x{h}")
+    print(f"Video: {duration_sec:.1f}s @ {fps}fps {total_frames} frames {w}x{h}")
     
-    # SPEED OPTIMIZATION:
-    # Determine how many frames to skip
-    # Goal: process max 60 frames per video for reasonable speed
-    MAX_FRAMES = 60
-    
+    # Smart frame sampling (FIX 4)
+    MAX_FRAMES = 50
     if self.sample_fps > 0:
       frame_interval = max(1, int(fps / self.sample_fps))
     elif duration_sec <= 10:
@@ -382,61 +464,84 @@ class VideoAnnotator:
     else:
       frame_interval = max(1, int(fps))
     
-    effective_fps = fps / frame_interval
     est_frames = total_frames // frame_interval
-    
-    print(f"Sampling every {frame_interval} frames (~{effective_fps:.1f} FPS effective, ~{est_frames} frames to process)")
+    print(f"Will process ~{est_frames} frames (every {frame_interval}th frame)")
     
     frames_dir = Path(output_dir) / "frames" / video_name
     frames_dir.mkdir(parents=True, exist_ok=True)
     
-    saved_frames = []
-    curr = 0
-    
-    while True:
-      ret, frame = cap.read()
-      if not ret:
-        break
-      if curr % frame_interval == 0:
-        fp = frames_dir / f"frame_{curr:06d}.jpg"
-        cv2.imwrite(str(fp), frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
-        saved_frames.append(str(fp))
-      curr += 1
-    cap.release()
-    
-    print(f"Extracted {len(saved_frames)} frames")
-    
-    all_results = []
-    # Temporarily disable SAM for speed in video frames as per "asap" requirement
+    # Disable SAM for video speed (FIX 4)
     original_sam = getattr(self.image_annotator, 'sam_model', None)
     if hasattr(self.image_annotator, 'sam_model'):
-        self.image_annotator.sam_model = None
-
-    try:
-        for i, fp in enumerate(saved_frames):
-            print(f"Analyzing {Path(fp).name} ({i+1}/{len(saved_frames)})")
-            # Result already saves preview to disk for _build_video to pick up
-            result = self.image_annotator.annotate_image(fp, output_dir, export_format, save_preview=True)
-            all_results.append(result)
-            if progress_callback:
-                progress_callback(int(((i+1) / len(saved_frames)) * 100))
-    finally:
-        # Restore SAM for subsequent image requests
-        if hasattr(self.image_annotator, 'sam_model'):
-            self.image_annotator.sam_model = original_sam
+      self.image_annotator.sam_model = None
     
+    all_results = []
+    saved_frames = []
+    curr = 0
+    frames_processed = 0
+    
+    try:
+      # PIPELINE: extract frame → annotate → next (FIX 4)
+      # No waiting for all frames to save first
+      while True:
+        ret, frame = cap.read()
+        if not ret:
+          break
+        
+        if curr % frame_interval == 0:
+          frame_path = frames_dir / f"frame_{curr:06d}.jpg"
+          
+          # Save frame
+          cv2.imwrite(
+            str(frame_path), frame,
+            [cv2.IMWRITE_JPEG_QUALITY, 90]
+          )
+          saved_frames.append(str(frame_path))
+          
+          # Annotate IMMEDIATELY while cap reads next
+          result = self.image_annotator.annotate_image(
+            str(frame_path),
+            output_dir,
+            export_format,
+            save_preview=True
+          )
+          all_results.append(result)
+          frames_processed += 1
+          
+          # Progress callback
+          if progress_callback and est_frames > 0:
+            pct = int((frames_processed / est_frames) * 100)
+            progress_callback(min(pct, 99))
+          
+          det = result.get("detections", 0)
+          if frames_processed % 5 == 0:
+            print(f"Frame {frames_processed}/{est_frames}: {det} detections")
+        
+        curr += 1
+    
+    finally:
+      cap.release()
+      # Restore SAM
+      if hasattr(self.image_annotator, 'sam_model'):
+        self.image_annotator.sam_model = original_sam
+    
+    print(f"Annotated {frames_processed} frames")
+    
+    # Build output video
     out_video = self._build_video(saved_frames, output_dir, video_name, fps, w, h)
     
+    # Build timeline
     timeline = self._build_timeline(all_results, saved_frames, fps)
     timeline_path = Path(output_dir) / f"{video_name}_timeline.json"
     with open(str(timeline_path), "w") as f:
+      import json
       json.dump(timeline, f, indent=2)
     
     total_det = sum(r.get("detections", 0) for r in all_results)
     
     return {
       "file": video_path,
-      "frames_processed": len(saved_frames),
+      "frames_processed": frames_processed,
       "total_frames": total_frames,
       "duration_seconds": round(duration_sec, 1),
       "total_detections": total_det,

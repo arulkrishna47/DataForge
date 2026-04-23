@@ -14,9 +14,26 @@ import shutil
 from pathlib import Path
 from typing import List
 import socketio
+from contextlib import asynccontextmanager
 from annotator import ImageAnnotator, VideoAnnotator
 
-app = FastAPI(title="Cortexa AI Annotation Service")
+# FIX 6 & 8: Lifespan events for warmup and directory setup
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Handles startup and shutdown events"""
+    # Create temp directory for fast I/O
+    Path("/tmp/cortexa_frames").mkdir(
+      parents=True, exist_ok=True
+    )
+    # Pre-load models in background
+    asyncio.create_task(warmup_models())
+    yield
+    # Shutdown logic if needed
+
+app = FastAPI(
+  title="Cortexa AI Annotation Service",
+  lifespan=lifespan
+)
 sio = socketio.AsyncServer(async_mode='asgi', cors_allowed_origins='*')
 socket_app = socketio.ASGIApp(sio, app)
 
@@ -46,7 +63,7 @@ def get_engine():
             # Start with default labels to pre-load weights
             GLOBAL_ENGINE = ImageAnnotator(labels=["person"], box_threshold=0.20, text_threshold=0.20)
             
-            # SHARE the same engine instance to save VRAM and fix 'NoneType' error
+            # SHARE the same engine instance to save VRAM
             print("[SYSTEM] Initializing Video Subsystem...")
             VIDEO_ENGINE = VideoAnnotator(GLOBAL_ENGINE)
             print("[SYSTEM] All AI Engines Online.")
@@ -56,6 +73,19 @@ def get_engine():
         import traceback
         traceback.print_exc()
         return None, None
+
+async def warmup_models():
+  """Load AI models in background at startup"""
+  await asyncio.sleep(2)  # Let server start first
+  print("[STARTUP] Pre-loading AI models...")
+  try:
+    # Run in thread so we don't block event loop
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, get_engine)
+    print("[STARTUP] Models pre-loaded successfully!")
+  except Exception as e:
+    print(f"[STARTUP] Model pre-load failed: {e}")
+    print("[STARTUP] Models will load on first request")
 
 @app.get("/health")
 async def health():
@@ -155,44 +185,66 @@ async def get_preview(job_id: str, filename: str):
     return {"error": "File not found"}
   return FileResponse(str(path))
 
-async def run_annotation_job(job_id, file_paths, labels, export_format, box_th, text_th, sample_fps):
+async def run_annotation_job(
+  job_id, file_paths, labels,
+  export_format, box_th, text_th, sample_fps
+):
   try:
     jobs[job_id]["status"] = "processing"
-    jobs[job_id]["message"] = "Waking up AI Brain... (may take 2 mins)"
-    await sio.emit("job_progress", {"job_id": job_id, "progress": 0, "message": jobs[job_id]["message"]})
+    jobs[job_id]["message"] = \
+      "Loading AI models... (first load ~2 min)"
+    await sio.emit("job_progress", {
+      "job_id": job_id,
+      "progress": 0,
+      "message": jobs[job_id]["message"]
+    })
     
-    # Lazy load the models only when needed
+    # Get or create global engine
     image_engine, video_engine = get_engine()
     
-    if not image_engine or not video_engine:
-        raise RuntimeError("AI Engines failed to initialize. Check VRAM/logs.")
+    if not image_engine:
+      raise RuntimeError(
+        "AI Engine failed to load. "
+        "Check server logs."
+      )
     
-    # Ensure they use the latest parameters and sterilized labels
-    image_engine.labels = labels
+    # FIX 5: Update labels and thresholds for this job
+    # (single-user assumption for now)
+    image_engine.labels = list(labels)
     image_engine.box_threshold = float(box_th)
     image_engine.text_threshold = float(text_th)
+    image_engine._last_prompt = None  # Reset cache (FIX 1)
     
-    # Sync video engine settings
-    video_engine.labels = labels
+    video_engine.labels = list(labels)
     video_engine.box_threshold = float(box_th)
     video_engine.text_threshold = float(text_th)
     video_engine.sample_fps = float(sample_fps)
-    
-    # Also sync the underlying image annotator inside the video engine
-    video_engine.image_annotator.labels = labels
+    video_engine.image_annotator.labels = list(labels)
     video_engine.image_annotator.box_threshold = float(box_th)
     video_engine.image_annotator.text_threshold = float(text_th)
+    video_engine.image_annotator._last_prompt = None
     
-    jobs[job_id]["message"] = "AI Brain Online. Starting Analysis..."
-    await sio.emit("job_progress", {"job_id": job_id, "progress": 5, "message": jobs[job_id]["message"]})
+    jobs[job_id]["message"] = \
+      f"Processing {len(file_paths)} file(s) with labels: {labels}"
+    await sio.emit("job_progress", {
+      "job_id": job_id,
+      "progress": 5,
+      "message": jobs[job_id]["message"]
+    })
     
     output_dir = OUTPUT_DIR / job_id
     output_dir.mkdir(exist_ok=True)
     
-    video_extensions = {'.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv'}
-    image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.webp', '.tiff'}
+    video_ext = {
+      '.mp4', '.avi', '.mov',
+      '.mkv', '.webm', '.flv'
+    }
+    image_ext = {
+      '.jpg', '.jpeg', '.png',
+      '.bmp', '.webp', '.tiff'
+    }
     
-    # Filter and robustly extract
+    # Expand ZIP files
     all_files = []
     for fp in file_paths:
       p = Path(fp)
@@ -201,55 +253,84 @@ async def run_annotation_job(job_id, file_paths, labels, export_format, box_th, 
         extract_dir.mkdir(exist_ok=True)
         with zipfile.ZipFile(fp, 'r') as z:
           z.extractall(extract_dir)
-        # Deep recursive search for images/videos
         for f in extract_dir.rglob("*"):
-          if f.is_file() and f.suffix.lower() in (image_extensions | video_extensions):
+          if f.is_file() and f.suffix.lower() \
+             in (image_ext | video_ext):
             all_files.append(str(f))
-      elif p.suffix.lower() in (image_extensions | video_extensions):
+      elif p.suffix.lower() in (image_ext | video_ext):
         all_files.append(fp)
-
+    
     total = len(all_files)
     jobs[job_id]["total"] = total
+    print(f"Processing {total} files")
     
     loop = asyncio.get_running_loop()
     
     for i, fp in enumerate(all_files):
       ext = Path(fp).suffix.lower()
       fname = Path(fp).name
-      msg = f"Analyzing {fname} ({i+1}/{total})"
-      jobs[job_id]["message"] = msg
-      await sio.emit("job_progress", {"job_id": job_id, "progress": jobs[job_id]["progress"], "message": msg})
       
-      if ext in video_extensions:
-        def on_vid_progress(p):
-            current_unit_progress = int((i / total) * 95)
-            frame_progress = (p / 100.0) * (95.0 / total)
-            global_progress = int(current_unit_progress + frame_progress)
-            
-            if global_progress > jobs[job_id]["progress"]:
-                jobs[job_id]["progress"] = global_progress
-                # Send update back to main loop to emit
-                loop.call_soon_threadsafe(
-                    lambda: asyncio.create_task(sio.emit("job_progress", {
-                        "job_id": job_id, 
-                        "progress": global_progress, 
-                        "message": f"Analyzing {fname} ({global_progress}%)"
-                    }))
-                )
-
-        # Run blocking video process in thread
-        res = await loop.run_in_executor(None, video_engine.annotate_video, fp, str(output_dir), export_format, on_vid_progress)
-      else:
-        # Run blocking image process in thread
-        res = await loop.run_in_executor(None, image_engine.annotate_image, fp, str(output_dir), export_format)
+      jobs[job_id]["message"] = \
+        f"Annotating: {fname} ({i+1}/{total})"
+      await sio.emit("job_progress", {
+        "job_id": job_id,
+        "progress": jobs[job_id]["progress"],
+        "message": jobs[job_id]["message"]
+      })
+      
+      try:
+        if ext in video_ext:
+          # Video progress callback (FIX 5 update)
+          def make_callback(file_idx, file_total):
+            def cb(frame_pct):
+              base = int((file_idx / file_total) * 90)
+              step = int((1 / file_total) * 90)
+              prog = base + int((frame_pct / 100) * step)
+              jobs[job_id]["progress"] = prog
+              asyncio.run_coroutine_threadsafe(
+                sio.emit("job_progress", {
+                  "job_id": job_id,
+                  "progress": prog,
+                  "message": f"Video frame {frame_pct}%: {fname}"
+                }),
+                loop
+              )
+            return cb
+          
+          res = await loop.run_in_executor(
+            None,
+            video_engine.annotate_video,
+            fp, str(output_dir), export_format,
+            make_callback(i, total)
+          )
+        else:
+          res = await loop.run_in_executor(
+            None,
+            image_engine.annotate_image,
+            fp, str(output_dir), export_format
+          )
         
-      if "error" in res:
-        print(f"File error: {res['error']}")
-        continue
-
-      jobs[job_id]["progress"] = int(((i+1)/total)*95)
-      jobs[job_id]["results"].append(res)
-      await sio.emit("job_progress", {"job_id": job_id, "progress": jobs[job_id]["progress"], "message": f"Done {fname}"})
+        if res.get("error"):
+          print(f"Error on {fname}: {res['error']}")
+        else:
+          jobs[job_id]["results"].append(res)
+          det = res.get("detections", 0)
+          print(f"Done {fname}: {det} detections")
+      
+      except Exception as file_err:
+        print(f"Failed {fname}: {file_err}")
+        jobs[job_id]["results"].append({
+          "file": fp,
+          "error": str(file_err),
+          "detections": 0
+        })
+      
+      jobs[job_id]["progress"] = int(((i + 1) / total) * 90)
+      await sio.emit("job_progress", {
+        "job_id": job_id,
+        "progress": jobs[job_id]["progress"],
+        "message": f"Completed {i+1}/{total}: {fname}"
+      })
 
     # Save classes.txt explicitly
     with open(output_dir / "classes.txt", "w") as f:
