@@ -17,7 +17,14 @@ const AuthCallback = () => {
         return;
       }
 
-      const role = session.user?.user_metadata?.role || 'client';
+      // Check if user email matches admin email
+      const userEmail = session.user?.email?.toLowerCase() || '';
+      const adminEmail = (import.meta.env.VITE_ADMIN_EMAIL || '').toLowerCase();
+      const isAdmin = userEmail === adminEmail;
+      
+      // Also check metadata role as fallback
+      const metadataRole = session.user?.user_metadata?.role || 'client';
+      const role = isAdmin ? 'admin' : metadataRole;
 
       // Smart Redirect Handover: Prioritize the intentional destination (e.g. Auto-Annotation)
       const savedRedirect = sessionStorage.getItem('redirectAfterLogin');
