@@ -28,10 +28,13 @@ const DATASET_TYPES = [
 ]
 
 const SOURCES = [
-  { value: 'all', label: 'All Sources' },
-  { value: 'huggingface', label: '🤗 Hugging Face' },
-  { value: 'kaggle', label: '📊 Kaggle' },
-  { value: 'github', label: '🐙 GitHub' },
+  { value: 'all', label: 'All Sources', icon: '🗂️' },
+  { value: 'huggingface', label: 'Hugging Face', icon: '🤗' },
+  { value: 'kaggle', label: 'Kaggle', icon: '📊' },
+  { value: 'github', label: 'GitHub', icon: '🐙' },
+  { value: 'paperswithcode', label: 'Papers With Code', icon: '📄' },
+  { value: 'uci', label: 'UCI ML', icon: '🎓' },
+  { value: 'roboflow', label: 'Roboflow', icon: '🔭' },
 ]
 
 const POPULAR_SEARCHES = [
@@ -50,7 +53,11 @@ const POPULAR_SEARCHES = [
 const SOURCE_COLORS = {
   huggingface: '#FF9D00',
   kaggle: '#20BEFF',
-  github: '#C17BFF'
+  github: '#6E40C9',
+  paperswithcode: '#21CBCE',
+  uci: '#FF6B35',
+  roboflow: '#8B5CF6',
+  web: '#6B7280',
 }
 
 export default function DatasetSearch() {
@@ -139,7 +146,7 @@ export default function DatasetSearch() {
             <h1 className="text-3xl font-bold bg-gradient-to-r from-[#C17BFF] to-[#00D1FF] bg-clip-text text-transparent">
               Dataset Collection
             </h1>
-            <p className="text-gray-400">Search millions of datasets from Kaggle, Hugging Face, and GitHub</p>
+            <p className="text-gray-400">Search datasets from Hugging Face, Kaggle, GitHub, Papers With Code, UCI, and Roboflow</p>
           </div>
         </div>
 
@@ -198,11 +205,12 @@ export default function DatasetSearch() {
                   key={s.value}
                   onClick={() => setSource(s.value)}
                   className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
-                    source === s.value 
-                      ? 'bg-white/10 text-white border border-white/20' 
+                    source === s.value
+                      ? 'bg-white/10 text-white border border-white/20'
                       : 'bg-transparent text-gray-500 hover:text-gray-300'
                   }`}
                 >
+                  <span className="mr-1.5">{s.icon}</span>
                   {s.label}
                 </button>
               ))}
@@ -228,15 +236,23 @@ export default function DatasetSearch() {
           )}
           
           {stats?.sources?.find(
-            s => s.name === 'kaggle' && 
+            s => s.name === 'kaggle' &&
             s.error?.includes('not configured')
           ) && (
-            <div className="text-xs text-blue-400 bg-blue-900/20 p-3 rounded-lg mt-2">
-              <strong>Enable Kaggle results:</strong>
-              <br />
-              1. Go to kaggle.com → Account → API → "Create New Token"
-              <br />
-              2. Add to server .env: KAGGLE_USERNAME=xxx KAGGLE_KEY=xxx
+            <div className="bg-[#1a2744] border border-[#2563EB] rounded-lg p-4 mt-2">
+              <h4 className="text-[#60A5FA] font-bold mb-2">📊 Enable Kaggle Results (Free)</h4>
+              <ol className="text-[#93C5FD] text-xs space-y-1.5 ml-4">
+                <li>1. Go to <strong>kaggle.com</strong> → Sign in → Profile → Settings</li>
+                <li>2. Scroll to <strong>API section</strong> → Click "Create New Token"</li>
+                <li>3. Opens a kaggle.json file — copy username and key values</li>
+                <li>4. Add to <strong>/server/.env</strong>:
+                  <code className="block bg-[#0f172a] p-2 rounded mt-1 font-mono">
+                    KAGGLE_USERNAME=your_username<br />
+                    KAGGLE_KEY=your_api_key
+                  </code>
+                </li>
+                <li>5. Restart the server</li>
+              </ol>
             </div>
           )}
         </div>
@@ -283,11 +299,11 @@ export default function DatasetSearch() {
                   <div>
                     Showing <span className="text-white font-medium">{results.length}</span> results for "<span className="text-[#C17BFF] italic font-medium">{query}</span>"
                   </div>
-                  <div className="flex gap-4">
+                  <div className="flex gap-3 flex-wrap">
                     {stats.sources.map(s => (
-                      <span key={s.name} className="flex items-center gap-1.5 opacity-80">
+                      <span key={s.name} style={{ color: SOURCE_COLORS[s.name] || '#fff' }} className="flex items-center gap-1.5 text-xs">
                         <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: SOURCE_COLORS[s.name] }} />
-                        {s.count} from {s.name === 'huggingface' ? 'HF' : s.name.charAt(0).toUpperCase() + s.name.slice(1)}
+                        {s.count} from {s.name === 'huggingface' ? 'HF' : s.name === 'paperswithcode' ? 'PwC' : s.name === 'roboflow' ? 'RF' : s.name.charAt(0).toUpperCase() + s.name.slice(1)}
                       </span>
                     ))}
                   </div>
@@ -372,12 +388,26 @@ export default function DatasetSearch() {
                 <div className="text-center py-16 text-gray-400">
                   <div className="text-5xl mb-4">🔍</div>
                   <h3 className="text-xl text-white mb-2">No datasets found for "{query}"</h3>
-                  <p>Try these tips:</p>
-                  <ul className="text-sm mt-2 flex flex-col items-center gap-1">
-                    <li>• Use simpler keywords (e.g. "cats" instead of "cat images dataset")</li>
-                    <li>• Try a different dataset type filter</li>
-                    <li>• Search for the domain (e.g. "medical", "traffic", "retail")</li>
-                  </ul>
+                  <p className="mb-4">This is a very specific topic. Try these related searches:</p>
+
+                  <div className="flex flex-wrap justify-center gap-2 mb-6">
+                    {stats?.expandedQueries
+                      ?.filter((q) => q !== query)
+                      .map((suggestion) => (
+                        <button
+                          key={suggestion}
+                          onClick={() => handleSearch(suggestion)}
+                          className="px-4 py-2 rounded-full border border-[#C17BFF] bg-transparent text-[#C17BFF] text-sm cursor-pointer hover:bg-[#C17BFF]/10 transition-all"
+                        >
+                          Try: "{suggestion}"
+                        </button>
+                      ))}
+                  </div>
+
+                  <p className="text-xs text-gray-500">
+                    💡 Very niche topics like "chain snatching" may not have named datasets.
+                    Try broader terms like "theft detection" or "crime surveillance".
+                  </p>
                 </div>
               )}
             </>
@@ -391,7 +421,7 @@ export default function DatasetSearch() {
           </div>
           <div className="text-xs text-slate-400 leading-relaxed">
             <strong className="text-slate-200 uppercase tracking-widest block mb-1">Cortexa Intelligence Hub</strong>
-            Search results are aggregated in real-time across Hugging Face's dataset registry, Kaggle's open-source repository, and GitHub's ML collections. All results are filtered for research quality and metadata integrity. Secure access managed via Cortexa Auth.
+            Search results are aggregated in real-time across Hugging Face, Kaggle, GitHub, Papers With Code, UCI ML Repository, and Roboflow Universe. All results are filtered for research quality. Kaggle requires API keys in server .env.
           </div>
         </div>
       </div>
