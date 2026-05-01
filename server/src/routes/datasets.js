@@ -264,13 +264,25 @@ async function searchKaggle(query, type, limit) {
   const username = process.env.KAGGLE_USERNAME;
   const key = process.env.KAGGLE_KEY;
 
-  if (!username || !key ||
-      username === 'your_kaggle_username' ||
-      key === 'your_kaggle_api_key') {
+  const isNotConfigured = 
+    !username || 
+    !key || 
+    username.trim() === '' ||
+    key.trim() === '' ||
+    username === 'your_kaggle_username' ||
+    username === 'your_actual_kaggle_username' ||
+    username.startsWith('your_') ||
+    key === 'your_kaggle_api_key' ||
+    key === 'your_actual_kaggle_api_key' ||
+    key.startsWith('your_') ||
+    key.length < 10;
+
+  if (isNotConfigured) {
+    console.log('[Kaggle] Credentials not configured or invalid format');
     return {
       source: 'kaggle',
       results: [],
-      error: 'KAGGLE_USERNAME and KAGGLE_KEY not configured in .env'
+      error: 'KAGGLE_USERNAME and KAGGLE_KEY not configured in server .env file'
     };
   }
 
@@ -567,98 +579,189 @@ async function searchPapersWithCode(query, type, limit) {
 
 async function searchUCI(query, type, limit) {
   try {
-    const url = `https://archive.ics.uci.edu/api/datasets?search=${encodeURIComponent(query)}&skip=0&take=${Math.min(limit, 10)}&orderBy=NumHits&orderByAsc=false`;
+    const encodedQuery = encodeURIComponent(query);
+    const url = `https://archive.ics.uci.edu/api/datasets?search=${encodedQuery}&skip=0&take=${Math.min(limit, 10)}&orderBy=NumHits&orderByAsc=false`;
+
+    console.log(`[UCI] Searching: "${query}"`);
 
     const response = await axios.get(url, {
       headers: {
         'Accept': 'application/json',
-        'User-Agent': 'Cortexa/1.0'
+        'User-Agent': 'Mozilla/5.0 (compatible; Cortexa/1.0)',
+        'Origin': 'https://archive.ics.uci.edu',
+        'Referer': 'https://archive.ics.uci.edu/datasets',
       },
-      timeout: 10000
+      timeout: 12000,
+      maxRedirects: 5,
     });
 
-    const datasets = response.data?.data || response.data?.datasets || response.data || [];
+    let datasets = [];
+    const data = response.data;
 
-    const arr = Array.isArray(datasets) ? datasets : [];
+    if (Array.isArray(data)) {
+      datasets = data;
+    } else if (data?.data && Array.isArray(data.data)) {
+      datasets = data.data;
+    } else if (data?.result && Array.isArray(data.result)) {
+      datasets = data.result;
+    } else if (data?.datasets) {
+      datasets = data.datasets;
+    } else {
+      console.log('[UCI] Unexpected response format:', typeof data, JSON.stringify(data).slice(0, 200));
+      datasets = [];
+    }
+
+    console.log(`[UCI] Found ${datasets.length} datasets`);
 
     return {
       source: 'uci',
-      results: arr.slice(0, limit).map(d => ({
-        id: d.id || String(d.ID),
-        title: d.name || d.Name,
-        description: cleanDescription(
-          d.abstract || d.Abstract || d.description || 'UCI ML Repository dataset'
-        ),
-        source: 'uci',
-        sourceLabel: 'UCI ML Repository',
-        sourceLogo: '🎓',
-        url: d.id ? `https://archive.ics.uci.edu/dataset/${d.id}` : 'https://archive.ics.uci.edu/datasets',
-        previewUrl: d.id ? `https://archive.ics.uci.edu/dataset/${d.id}` : 'https://archive.ics.uci.edu/datasets',
-        downloads: d.NumHits || 0,
-        likes: d.NumHits || 0,
-        tags: [d.area || d.Area, d.task || d.Task, d.featureType || d.FeatureType].filter(Boolean),
-        size: d.numInstances ? `${d.numInstances} instances` : 'Unknown',
-        license: 'CC BY 4.0',
-        lastModified: null,
-        type: type || 'general',
-        relevanceScore: 40,
-      }))
+      results: datasets.slice(0, limit).map(d => {
+        const id = d.id || d.ID || d.datasetId || String(Math.random());
+        const name = d.name || d.Name || d.datasetName || 'Unknown';
+        const abstract = d.abstract || d.Abstract || d.description || d.Description || 'UCI Machine Learning Repository dataset';
+        const area = d.area || d.Area || d.subject || '';
+        const task = d.tasks?.[0] || d.task || d.Task || '';
+        const instances = d.numInstances || d.instanceCount || d.rows || 0;
+        const features = d.numFeatures || d.featureCount || d.cols || 0;
+        const hits = d.numHits || d.NumHits || 0;
+
+        return {
+          id: String(id),
+          title: name,
+          description: cleanDescription(abstract),
+          source: 'uci',
+          sourceLabel: 'UCI ML Repository',
+          sourceLogo: '🎓',
+          url: isNaN(Number(id)) ? 'https://archive.ics.uci.edu/datasets' : `https://archive.ics.uci.edu/dataset/${id}`,
+          previewUrl: isNaN(Number(id)) ? 'https://archive.ics.uci.edu/datasets' : `https://archive.ics.uci.edu/dataset/${id}`,
+          downloads: hits,
+          likes: hits,
+          tags: [area, task].filter(Boolean).slice(0, 4),
+          size: instances ? `${instances.toLocaleString()} rows` + (features ? `, ${features} features` : '') : 'See dataset page',
+          license: 'CC BY 4.0',
+          lastModified: null,
+          type: type || 'tabular',
+          relevanceScore: 40 + Math.log10(hits + 1) * 3,
+        };
+      })
     };
   } catch (err) {
+    console.error('[UCI] Error:', err.message);
+    
+    let errorMsg = 'UCI API temporarily unavailable';
+    if (err.code === 'ECONNREFUSED') {
+      errorMsg = 'Cannot connect to UCI server';
+    } else if (err.response?.status === 403) {
+      errorMsg = 'UCI blocked the request';
+    } else if (err.response?.status === 429) {
+      errorMsg = 'UCI rate limit exceeded';
+    } else if (err.code === 'ETIMEDOUT' || err.message.includes('timeout')) {
+      errorMsg = 'UCI request timed out';
+    }
+
     return {
       source: 'uci',
       results: [],
-      error: err.message
+      error: errorMsg
     };
   }
 }
 
 async function searchRoboflow(query, type, limit) {
   try {
-    const url = `https://universe.roboflow.com/search/datasets?query=${encodeURIComponent(query)}&size=${Math.min(limit, 10)}`;
+    const apiKey = process.env.ROBOFLOW_API_KEY || '';
+    const encodedQuery = encodeURIComponent(query);
+    
+    let url = `https://api.roboflow.com/universe/search?q=${encodedQuery}&n=${Math.min(limit, 10)}`;
+    
+    if (apiKey) {
+      url += `&api_key=${apiKey}`;
+    }
+
+    console.log(`[Roboflow] Searching: "${query}"`);
+
+    const headers = {
+      'Accept': 'application/json',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    };
+    if (apiKey) {
+      headers['Authorization'] = `Bearer ${apiKey}`;
+    }
 
     const response = await axios.get(url, {
-      headers: {
-        'Accept': 'application/json',
-        'User-Agent': 'Cortexa/1.0'
-      },
-      timeout: 10000
+      headers,
+      timeout: 12000,
     });
 
-    const datasets = response.data?.datasets || response.data?.results || [];
+    let datasets = [];
+    const data = response.data;
 
-    if (!Array.isArray(datasets)) {
-      return { source: 'roboflow', results: [] };
+    if (data?.results) {
+      datasets = data.results;
+    } else if (data?.datasets) {
+      datasets = data.datasets;
+    } else if (Array.isArray(data)) {
+      datasets = data;
+    }
+
+    console.log(`[Roboflow] Found ${datasets.length} datasets`);
+
+    if (datasets.length === 0) {
+      const altUrl = `https://universe.roboflow.com/api/search?query=${encodedQuery}&limit=${limit}`;
+      try {
+        const altResponse = await axios.get(altUrl, { headers, timeout: 8000 });
+        datasets = altResponse.data?.results || altResponse.data?.datasets || [];
+      } catch {
+        // Alternative also failed
+      }
     }
 
     return {
       source: 'roboflow',
-      results: datasets.slice(0, limit).map(d => ({
-        id: d.id || d.slug,
-        title: d.name || d.title,
-        description: cleanDescription(
-          d.description || `${d.images || 0} images, ${d.classes || 0} classes`
-        ),
-        source: 'roboflow',
-        sourceLabel: 'Roboflow Universe',
-        sourceLogo: '🔭',
-        url: d.url || `https://universe.roboflow.com/${d.id}`,
-        previewUrl: d.url || `https://universe.roboflow.com/${d.id}`,
-        downloads: d.downloads || 0,
-        likes: d.stars || 0,
-        tags: (d.classes || []).slice(0, 6),
-        size: d.images ? `${d.images} images` : 'Unknown',
-        license: d.license || 'See link',
-        lastModified: d.updatedAt || null,
-        type: 'image',
-        relevanceScore: 60,
-      }))
+      results: datasets.slice(0, limit).map(d => {
+        const id = d.id || d.slug || d.project_id || '';
+        const name = d.name || d.title || d.project_name || id;
+        const owner = d.owner || d.username || d.workspace || '';
+
+        return {
+          id: String(id),
+          title: name,
+          description: cleanDescription(
+            d.description ||
+            (d.images ? `${d.images.toLocaleString()} images` : '') +
+            (d.classes ? `, ${d.classes} classes` : '') ||
+            'Computer vision dataset on Roboflow'
+          ),
+          source: 'roboflow',
+          sourceLabel: 'Roboflow Universe',
+          sourceLogo: '🔭',
+          url: owner && id ? `https://universe.roboflow.com/${owner}/${id}` : d.url || 'https://universe.roboflow.com',
+          previewUrl: owner && id ? `https://universe.roboflow.com/${owner}/${id}` : d.url || 'https://universe.roboflow.com',
+          downloads: d.downloads || d.exportCount || 0,
+          likes: d.stars || d.likes || 0,
+          tags: (d.classes_list || d.annotation_types || d.tags || []).slice(0, 6),
+          size: d.images ? `${d.images.toLocaleString()} images` : d.size || 'See link',
+          license: d.license || d.public_license || 'CC BY 4.0',
+          lastModified: d.updated || d.lastUpdated || null,
+          type: 'image',
+          relevanceScore: 55,
+        };
+      })
     };
   } catch (err) {
+    console.error('[Roboflow] Error:', err.message);
+    
+    let errorMsg = 'Roboflow temporarily unavailable';
+    if (err.response?.status === 401 || err.response?.status === 403) {
+      errorMsg = 'Add ROBOFLOW_API_KEY to .env for Roboflow results (free)';
+    } else if (err.code === 'ETIMEDOUT') {
+      errorMsg = 'Roboflow request timed out';
+    }
+
     return {
       source: 'roboflow',
       results: [],
-      error: 'Roboflow search unavailable'
+      error: errorMsg
     };
   }
 }
@@ -809,6 +912,79 @@ router.get('/search', protect, async (req, res) => {
       error: 'Search failed: ' + err.message
     });
   }
+});
+
+router.get('/test-connections', protect, async (req, res) => {
+  const results = {};
+
+  // Test Hugging Face
+  try {
+    await axios.get('https://huggingface.co/api/datasets?search=test&limit=1', { timeout: 5000 });
+    results.huggingface = '✅ Connected';
+  } catch (e) {
+    results.huggingface = `❌ ${e.message}`;
+  }
+
+  // Test Kaggle
+  const kUser = process.env.KAGGLE_USERNAME;
+  const kKey = process.env.KAGGLE_KEY;
+  if (!kUser || !kKey || kUser.includes('your_') || kKey.includes('your_') || kKey.length < 10) {
+    results.kaggle = '⚠️ API key not configured';
+  } else {
+    try {
+      const creds = Buffer.from(`${kUser}:${kKey}`).toString('base64');
+      await axios.get('https://www.kaggle.com/api/v1/datasets/list?search=test&pageSize=1', {
+        headers: { 'Authorization': `Basic ${creds}` },
+        timeout: 8000
+      });
+      results.kaggle = '✅ Connected';
+    } catch (e) {
+      results.kaggle = `❌ ${e.message}`;
+    }
+  }
+
+  // Test GitHub
+  try {
+    const ghHeaders = { 'Accept': 'application/vnd.github+json' };
+    const ghToken = process.env.GITHUB_TOKEN;
+    if (ghToken) ghHeaders['Authorization'] = `Bearer ${ghToken}`;
+    const ghRes = await axios.get('https://api.github.com/rate_limit', { headers: ghHeaders, timeout: 5000 });
+    const remaining = ghRes.data?.rate?.remaining || 0;
+    results.github = ghToken ? `✅ Connected (${remaining} requests left)` : `✅ Connected - no token (${remaining}/60 requests left)`;
+  } catch (e) {
+    results.github = `❌ ${e.message}`;
+  }
+
+  // Test UCI
+  try {
+    await axios.get('https://archive.ics.uci.edu/api/datasets?search=iris&take=1', { timeout: 8000 });
+    results.uci = '✅ Connected';
+  } catch (e) {
+    results.uci = `❌ ${e.message}`;
+  }
+
+  // Test Papers With Code
+  try {
+    await axios.get('https://paperswithcode.com/api/v1/datasets/?q=test&items_per_page=1', { timeout: 5000 });
+    results.paperswithcode = '✅ Connected';
+  } catch (e) {
+    results.paperswithcode = `❌ ${e.message}`;
+  }
+
+  // Test Roboflow
+  const rfKey = process.env.ROBOFLOW_API_KEY;
+  if (!rfKey) {
+    results.roboflow = '⚠️ API key not configured (optional)';
+  } else {
+    try {
+      await axios.get(`https://api.roboflow.com/universe/search?q=test&n=1&api_key=${rfKey}`, { timeout: 8000 });
+      results.roboflow = '✅ Connected';
+    } catch (e) {
+      results.roboflow = `❌ ${e.message}`;
+    }
+  }
+
+  return res.json({ timestamp: new Date().toISOString(), connections: results });
 });
 
 module.exports = router;

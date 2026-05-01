@@ -217,8 +217,17 @@ export default function DatasetSearch() {
             </div>
           </div>
 
-          {stats?.sources?.map((s) => 
-            s.error && (
+          {stats?.sources?.map((s) => {
+            if (!s.error) return null;
+            
+            const isNotConfigured = s.error.includes('not configured') || s.error.includes('API key');
+            const isUnavailable = s.error.includes('unavailable') || s.error.includes('timed out') || s.error.includes('timeout') || s.error.includes('blocked');
+            
+            if (isUnavailable && s.name !== 'kaggle') {
+              return null;
+            }
+            
+            return (
               <div key={s.name} 
                 className="text-xs text-amber-400 
                   bg-amber-900/20 px-3 py-2 rounded-lg mt-4
@@ -232,8 +241,8 @@ export default function DatasetSearch() {
                     : 'Temporarily unavailable'
                 }
               </div>
-            )
-          )}
+            );
+          })}
           
           {stats?.sources?.find(
             s => s.name === 'kaggle' &&
