@@ -1,5 +1,26 @@
-import { useEffect } from 'react';
+import { useEffect, Component } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+
+// Error Boundary to catch React errors
+class ErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true };
+  }
+  componentDidCatch(error, errorInfo) {
+    // Suppress clipboard/model errors
+    if (error.message && (error.message.includes('clipboard') || error.message.includes('model does not support'))) {
+      console.log('Suppressed React error:', error.message);
+      this.setState({ hasError: false });
+    }
+  }
+  render() {
+    return this.props.children;
+  }
+}
 import { Toaster } from 'sonner';
 import PublicLayout from './layouts/PublicLayout';
 import Home from './pages/Home';
@@ -51,9 +72,10 @@ function App() {
 
   console.log('App: Rendering Routes');
   return (
-    <AuthProvider>
-      <Toaster position="top-right" richColors />
-      <Router>
+    <ErrorBoundary>
+      <AuthProvider>
+        <Toaster position="top-right" richColors />
+        <Router>
         <Routes>
           {/* Public Routes */}
           <Route element={<PublicLayout />}>
@@ -96,6 +118,7 @@ function App() {
         </Routes>
       </Router>
     </AuthProvider>
+    </ErrorBoundary>
   );
 }
 
