@@ -105,9 +105,26 @@ export default function DatasetSearch() {
     }
   }
   
-  const copyLink = (url) => {
-    navigator.clipboard.writeText(url)
-    toast.success('Link copied to clipboard!')
+  const copyLink = async (url) => {
+    try {
+      await navigator.clipboard.writeText(url)
+      toast.success('Link copied to clipboard!')
+    } catch (err) {
+      // Fallback for browsers without clipboard access
+      const textArea = document.createElement('textarea')
+      textArea.value = url
+      textArea.style.position = 'fixed'
+      textArea.style.left = '-9999px'
+      document.body.appendChild(textArea)
+      textArea.select()
+      try {
+        document.execCommand('copy')
+        toast.success('Link copied to clipboard!')
+      } catch (e) {
+        toast.error('Failed to copy link')
+      }
+      document.body.removeChild(textArea)
+    }
   }
   
   const formatNumber = (n) => {
