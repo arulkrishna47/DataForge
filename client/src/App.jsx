@@ -32,12 +32,20 @@ import ClientList from './pages/admin/ClientList';
 function App() {
   useEffect(() => {
     const handleError = (event) => {
-      if (event.message && event.message.includes('clipboard')) {
+      if (event.message && (event.message.includes('clipboard') || event.message.includes('model does not support'))) {
+        console.log('Suppressed error:', event.message);
         event.preventDefault();
         event.stopPropagation();
+        return false;
       }
     };
     window.addEventListener('error', handleError);
+    window.onerror = (msg, url, line, col, error) => {
+      if (msg && (msg.toString().includes('clipboard') || msg.toString().includes('model does not support'))) {
+        console.log('Suppressed global error:', msg);
+        return true;
+      }
+    };
     return () => window.removeEventListener('error', handleError);
   }, []);
 
