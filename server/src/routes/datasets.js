@@ -862,12 +862,24 @@ router.get('/search', protect, async (req, res) => {
       const fn = searchFunctions[src];
       if (!fn) return Promise.resolve({ source: src, results: [] });
 
-      return Promise.race([fn(q, type, maxPerSource), timeout])
-        .catch(e => ({
-          source: src,
-          results: [],
-          error: e.message
-        }));
+      // Add explicit logging for each source
+      console.log(`[SEARCH] Starting search for ${src}...`);
+      
+      const promise = Promise.race([fn(q, type, maxPerSource), timeout])
+        .then(result => {
+          console.log(`[SEARCH] ${src} returned ${result.results?.length || 0} results, error: ${result.error || 'none'}`);
+          return result;
+        })
+        .catch(e => {
+          console.error(`[SEARCH] ${src} failed: ${e.message}`);
+          return {
+            source: src,
+            results: [],
+            error: e.message
+          };
+        });
+      
+      return promise;
     });
 
     const allResults = await Promise.all(searchPromises);
@@ -892,10 +904,11 @@ router.get('/search', protect, async (req, res) => {
       error: r.error || null
     }));
 
-    console.log(
-      `Results: ${unique.length} total - ` +
-      sourceStats.map(s => `${s.count} from ${s.name}`).join(', ')
-    );
+    console.log('=== SOURCE DETAILS ===');
+    allResults.forEach(r => {
+      console.log(`[${r.source}] count=${r.results?.length || 0}, error=${r.error || 'none'}`);
+    });
+    console.log(`Total results: ${unique.length}`);
 
     return res.json({
       query: q,
