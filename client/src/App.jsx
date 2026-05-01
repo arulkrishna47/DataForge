@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import PublicLayout from './layouts/PublicLayout';
@@ -29,6 +30,17 @@ import ProjectManagement from './pages/admin/ProjectManagement';
 import ClientList from './pages/admin/ClientList';
 
 function App() {
+  useEffect(() => {
+    const handleError = (event) => {
+      if (event.message && event.message.includes('clipboard')) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+    window.addEventListener('error', handleError);
+    return () => window.removeEventListener('error', handleError);
+  }, []);
+
   console.log('App: Rendering Routes');
   return (
     <AuthProvider>
